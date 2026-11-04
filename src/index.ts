@@ -236,6 +236,8 @@ export default function piAuto(pi: ExtensionAPI): void {
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
+		// 自定义消息没有用户 prompt；保留档位，也不打断正在进行的用户选档。
+		if ("messageType" in event && event.messageType === "custom") return;
 		if (!requireRuntime(ctx) || !enabled || stopped || ctx.signal?.aborted) return;
 		if (activeSelection) invalidateSelection();
 		const controller = new AbortController();
@@ -434,7 +436,7 @@ export default function piAuto(pi: ExtensionAPI): void {
 }
 
 async function planForEvent(
-	event: BeforeAgentStartEvent,
+	event: Extract<BeforeAgentStartEvent, { prompt: string }>,
 	ctx: ExtensionContext,
 	signal: AbortSignal,
 	complete: CompleteRouter,

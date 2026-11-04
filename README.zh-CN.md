@@ -4,6 +4,8 @@
 
 Pi 扩展：每次任务开始前，自动选择当前模型的 thinking effort（思考强度）。**只调整 effort，不切换模型。**
 
+这是 [ekil1100/pi-auto](https://github.com/ekil1100/pi-auto) 的兼容性维护分支。npm 上的 `pi-auto` 仍属于上游，本分支不向该包发布。
+
 ## 安装与使用
 
 需要 Node.js **22.19.0 或更高版本**及 Pi **0.99.0 或更高版本**。不再支持旧版 Pi：检测到缺少原生分类器接口时，扩展会停用选档并提示升级，不会退回旧版 TypeSafe 调用方式。
@@ -15,8 +17,10 @@ npm install -g @earendil-works/pi-coding-agent@latest
 ```
 
 ```bash
-pi install npm:pi-auto
+pi install git:github.com/honbolau/pi-auto
 ```
+
+如果已安装上游 `npm:pi-auto`，请先执行 `pi remove npm:pi-auto` 再安装本分支，避免重复注册 `/auto`。
 
 通过 `/model` 选择聊天模型即可，无需配置 scoped models。未设置启动默认值时扩展默认开启，底栏只显示 `auto` 和选中的选档模型，例如 `auto · typesafe/jev-latest`。
 
@@ -192,6 +196,14 @@ jq 'select(.type == "custom" and .customType == "pi-auto-decision") | .data | {r
 两种后端均只发送**当前任务＋上一轮用户输入及最后一条助手文本回复**，不进行历史候选筛选或重要性分类。
 
 请求还包含规则提示、模型及档位信息等额外内容。选择分类器或聊天判断者时，选档输入发送给对应提供商，且不会自动脱敏。发生回退时，当前模型的提供商只收到当前任务和最近一轮选档所需的输入。
+
+## Pi 兼容性
+
+开发依赖固定为 Pi **1.5.0**。CI 分别在 Pi **0.99.1** 和 **1.5.0** 下运行类型检查及完整测试。
+
+只有用户输入触发自动选档。Pi 1.2 起，扩展可通过自定义消息（`sendMessage(..., { triggerTurn: true })`）启动运行；这类运行沿用当前档位及最近选档诊断，不调用选档模型，也不打断正在进行的用户选档。消息本身仍正常处理。旧版不含 `messageType` 的用户事件继续正常选档。
+
+这些检查不代表完整的交互式 TUI 验证，也不保证选档最优。CI 使用模拟后端，无需模型凭据。
 
 ## 开发
 

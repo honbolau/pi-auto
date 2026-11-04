@@ -5,11 +5,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ekil1100/pi-auto.git"
+    "url": "git+https://github.com/honbolau/pi-auto.git"
   },
-  "homepage": "https://github.com/ekil1100/pi-auto#readme",
+  "homepage": "https://github.com/honbolau/pi-auto#readme",
   "bugs": {
-    "url": "https://github.com/ekil1100/pi-auto/issues"
+    "url": "https://github.com/honbolau/pi-auto/issues"
   },
   "type": "module",
   "keywords": [
@@ -39,9 +39,9 @@
     "@earendil-works/pi-tui": ">=0.99.0"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "0.99.1",
-    "@earendil-works/pi-coding-agent": "0.99.1",
-    "@earendil-works/pi-tui": "0.99.1",
+    "@earendil-works/pi-ai": "1.5.0",
+    "@earendil-works/pi-coding-agent": "1.5.0",
+    "@earendil-works/pi-tui": "1.5.0",
     "@types/node": "^24.0.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11"

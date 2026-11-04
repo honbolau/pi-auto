@@ -11,7 +11,10 @@ const model = (provider: string, id: string, name = id): ClassifierModel<Classif
 	contextWindow: 1000, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 });
 const chat = (provider: string, id: string, name = id): Model<Api> => ({
-	...model(provider, id, name), type: "chat", api: "openai-responses", reasoning: true, maxTokens: 2048,
+	// 聊天与分类器的 compat 类型不同，不能复用整个分类器模型对象。
+	type: "chat", provider, id, name, api: "openai-responses", reasoning: true, maxTokens: 2048,
+	baseUrl: "https://example.test", input: ["text"], contextWindow: 1000,
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 });
 const models: SelectorModels = {
 	chat: [chat("openai", "gpt-test", "GPT Test"), chat("custom", "chat-v2", "Task chat")],

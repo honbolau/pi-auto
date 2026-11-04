@@ -40,7 +40,9 @@ function createTheme() {
 
 function render(expanded: boolean, overrides: Partial<EffortDecision> = {}, width = 100) {
 	const theme = createTheme();
-	const component = renderDecisionEntry(entry(overrides), { expanded }, theme as unknown as Theme);
+	// 新版 Pi 注入键位格式化器；变量保留对旧版渲染选项的结构兼容。
+	const options = { expanded, keyText: () => "ctrl+o", keyHint };
+	const component = renderDecisionEntry(entry(overrides), options, theme as unknown as Theme);
 	if (!component) throw new Error("Missing decision component");
 	return { theme, lines: component.render(width).map(stripVTControlCharacters) };
 }

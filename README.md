@@ -4,6 +4,8 @@ English | [简体中文](./README.zh-CN.md)
 
 A Pi extension that automatically selects the current model's thinking effort before each task. **It adjusts effort only—never switches your model.**
 
+This is a compatibility-maintenance fork of [ekil1100/pi-auto](https://github.com/ekil1100/pi-auto). The npm package `pi-auto` still belongs to upstream; this fork does not publish it.
+
 ## Install and use
 
 Requires Node.js **22.19.0 or later** and Pi **0.99.0 or later**. Older Pi versions are not supported: pi-auto disables selection and asks you to upgrade instead of using the old TypeSafe SDK.
@@ -15,8 +17,10 @@ npm install -g @earendil-works/pi-coding-agent@latest
 ```
 
 ```bash
-pi install npm:pi-auto
+pi install git:github.com/honbolau/pi-auto
 ```
+
+If upstream `npm:pi-auto` is already installed, remove it with `pi remove npm:pi-auto` before installing this fork to avoid duplicate `/auto` registrations.
 
 Choose your chat model with `/model`; no scoped-model configuration is needed. The extension starts enabled unless you save a different startup default. The footer shows only `auto` and the selected selector model, for example `auto · typesafe/jev-latest`.
 
@@ -174,6 +178,14 @@ Neither the current task nor the selected previous turn has a local character li
 Both backends send only the current task and the previous turn's user input and final assistant text reply, without candidate selection or importance classification.
 
 Instructions, model information, and effort options are additional input. The selection request sends its input to the saved classifier or chat provider without automatic redaction. On fallback, the current model's provider receives the same current task and previous-turn context.
+
+## Pi compatibility
+
+Development dependencies are pinned to Pi **1.5.0**. CI runs type checking and the full test suite against Pi **0.99.1** and **1.5.0**.
+
+Only user-prompt runs trigger effort selection. Since Pi 1.2, extensions can start runs with custom messages (`sendMessage(..., { triggerTurn: true })`); those runs keep the current effort and latest selection diagnostics, without calling the selector or cancelling an in-flight user selection. The message itself is still processed normally. Legacy user events without `messageType` continue to select effort.
+
+These checks do not establish full interactive TUI compatibility or optimal effort choices. CI uses fakes and does not require model credentials.
 
 ## Development
 

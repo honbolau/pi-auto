@@ -158,19 +158,104 @@ function createHarness(
 			await command.handler(args, ctx as unknown as ExtensionCommandContext);
 		},
 		async start(prompt: string, images?: ImageContent[]) {
-			await emit({
-				type: "before_agent_start",
+			const event = {
+				type: "before_agent_start" as const,
+				messageType: "user" as const,
 				prompt,
 				...(images ? { images } : {}),
+				systemPrompt: "Test system prompt",
+				systemPromptOptions: {
+					cwd: process.cwd(), selectedTools: [], hiddenTools: [], toolSnippets: {}, toolGuidelines: {}, promptGuidelines: [],
+					appendSystemPrompt: "", sections: {}, contextFiles: [], skills: [],
+				},
+			};
+			await emit(event);
+		},
+		async customStart() {
+			// 旧版 Pi 没有此事件类型，保留同一夹具验证新旧宿主的兼容分支。
+			await emit({
+				type: "before_agent_start", messageType: "custom",
+				message: { customType: "background-result", content: "Background task completed", display: true },
 				systemPrompt: "Test system prompt",
 				systemPromptOptions: {
 					cwd: process.cwd(), selectedTools: [], toolSnippets: {}, toolGuidelines: {}, promptGuidelines: [],
 					appendSystemPrompt: "", sections: {}, contextFiles: [], skills: [],
 				},
-			});
+			} as unknown as ExtensionEvent);
 		},
 	};
 }
+
+describe("custom-message startup compatibility", () => {
+	it.each(["unsaved", "classifier", "chat"] as const)("keeps effort and avoids all selection side effects for %s backend", async (backend) => {
+		if (backend !== "unsaved") {
+			await writeFile(join(agentDirectory, "pi-auto.json"), JSON.stringify({
+				backend: { type: backend, provider: backend === "classifier" ? "typesafe" : "test", id: backend === "classifier" ? "jev-latest" : "current" },
+			}));
+		}
+		const harness = createHarness(createModel());
+		harness.pi.setThinkingLevel("high");
+		harness.pi.setThinkingLevel.mockClear();
+
+		await harness.customStart();
+
+		expect(harness.ctx.thinkingLevel).toBe("high");
+		expect(harness.pi.setThinkingLevel).not.toHaveBeenCalled();
+		expect(harness.ctx.modelRegistry.getAvailableOfType).not.toHaveBeenCalled();
+		expect(selectWithClassifier).not.toHaveBeenCalled();
+		expect(harness.complete).not.toHaveBeenCalled();
+		expect(harness.pi.appendEntry).not.toHaveBeenCalled();
+		expect(harness.ctx.ui.setWidget).not.toHaveBeenCalled();
+		expect(harness.ctx.ui.notify).not.toHaveBeenCalled();
+		if (backend === "unsaved") await expect(readFile(join(agentDirectory, "pi-auto.json"))).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
+	it("preserves the latest decision and still selects for the next user prompt", async () => {
+		availableModels = [classifierModel];
+		const harness = createHarness(createModel());
+		await harness.start("Initial user task");
+		const previous = decisions(harness);
+		vi.mocked(selectWithClassifier).mockClear();
+
+		await harness.customStart();
+
+		expect(decisions(harness)).toEqual(previous);
+		expect(selectWithClassifier).not.toHaveBeenCalled();
+		await harness.start("Next user task");
+		expect(selectWithClassifier).toHaveBeenCalledTimes(1);
+		expect(decisions(harness)).toHaveLength(previous.length + 1);
+	});
+
+	it.each(["model", "classifier", "fallback"] as const)("does not abort an in-flight %s user selection", async (backend) => {
+		const harness = historyHarness(backend, true);
+		const pending = harness.start("User task");
+		await vi.waitFor(() => expect(harness.attempts.length).toBeGreaterThan(0));
+		const signal = harness.signals.at(-1);
+
+		await harness.customStart();
+
+		expect(signal?.aborted).toBe(false);
+		expect(harness.pi.appendEntry).not.toHaveBeenCalled();
+		harness.release();
+		await pending;
+		expect(harness.ctx.thinkingLevel).toBe("high");
+		expect(decisions(harness)).toHaveLength(1);
+	});
+
+	it("continues to select for legacy user events without messageType", async () => {
+		const harness = createHarness(createModel());
+		// Pi 0.99 的用户事件没有 messageType，不能把它当作自定义消息跳过。
+		await harness.emit({
+			type: "before_agent_start", prompt: "Legacy user task", systemPrompt: "Test system prompt",
+			systemPromptOptions: {
+				cwd: process.cwd(), selectedTools: [], toolSnippets: {}, toolGuidelines: {}, promptGuidelines: [],
+				appendSystemPrompt: "", sections: {}, contextFiles: [], skills: [],
+			},
+		} as unknown as ExtensionEvent);
+		expect(harness.complete).toHaveBeenCalledTimes(1);
+		expect(harness.ctx.thinkingLevel).toBe("high");
+	});
+});
 
 describe("command completions", () => {
 	it.each([
