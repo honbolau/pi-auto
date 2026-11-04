@@ -1,3 +1,4 @@
+import { selectionImages } from "./selector-images.ts";
 import { join } from "node:path";
 import {
 	getSupportedThinkingLevels,
@@ -107,7 +108,7 @@ export default function piAuto(pi: ExtensionAPI): void {
 				backend = selected;
 				resolveInitialCurrentModel = false;
 				if (selected.type === "classifier") {
-					const message = `pi-auto selected ${backendLabel(selected)}, an available classifier in Pi, and saved it as the effort selector. It will receive your current task and recent-turn selection context. Image-capable classifiers also receive current-turn attachments (up to 4 images and 8 MiB of base64 combined). Use /auto model to change this, or choose a fixed chat model in the chat model tab.`;
+					const message = `pi-auto selected ${backendLabel(selected)}, an available classifier in Pi, and saved it as the effort selector. It will receive your current task and recent-turn selection context. Image-capable classifiers also receive current-turn attachments and, in step mode, the latest current-task tool screenshots. Images are deduplicated and prepared within provider limits; text-only degradation is reported. Use /auto model to change this, or choose a fixed chat model in the chat model tab.`;
 					if (ctx.mode === "tui" || ctx.mode === "rpc") ctx.ui.notify(message, "info");
 					else console.error(message);
 				}
@@ -484,6 +485,7 @@ export default function piAuto(pi: ExtensionAPI): void {
 			if (!activeSelection || activeSelection === controller) ctx.ui.setWidget(PROGRESS_KEY, undefined);
 			if (activeSelection === controller) activeSelection = undefined;
 			if (!stopped && initialRevision === selectionRevision) {
+				if (classifierDiagnostics?.imageWarning) ctx.ui.notify(`pi-auto: images were NOT used for effort selection (${classifierDiagnostics.imageWarning}); using text-only selection. The answering model is unaffected.`, "warning");
 				lastDecision = {
 					...outcome,
 					...(step ? { mode: "step" as const } : {}),
@@ -556,8 +558,8 @@ async function planForEvent(
 	return withAbort(planEffort(
 		{
 			task: event.prompt,
-			// 仅复用当前用户轮的附件，不收集历史图片或工具返回的图片。
-			...(event.images?.length ? { images: event.images } : {}),
+			// step 加入当前任务最新验证图，用户新任务及压缩边界隔离旧截图。
+			images: selectionImages(event.images ?? [], contextEntries, !!execution),
 			hasImages: (event.images?.length ?? 0) > 0 || hasContextImages(contextEntries),
 			currentModel: ctx.model,
 			...(selectorModel ? { selectorModel } : {}),

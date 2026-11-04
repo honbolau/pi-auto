@@ -3,6 +3,11 @@ import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { selectWithClassifier as select, type ClassifierInvocation } from "../src/classifier.ts";
 
+vi.mock("@earendil-works/pi-coding-agent", async (original) => ({
+	...await original<typeof import("@earendil-works/pi-coding-agent")>(),
+	resizeImage: vi.fn(async () => ({ data: "aGVsbG8=", mimeType: "image/png", width: 400, height: 400 })),
+}));
+
 const JEV_MODEL = "jev-latest";
 const selectedBackend = { type: "classifier" as const, provider: "typesafe", id: JEV_MODEL };
 const selectWithClassifier = (registry: ModelRegistry, invocation: ClassifierInvocation) => select(registry, invocation, selectedBackend);
@@ -59,7 +64,7 @@ describe("native Classifier adapter", () => {
 		}));
 		await selectWithClassifier(registry, { ...invocation, images });
 		const context = classify.mock.calls[0]?.[1] as { images?: unknown };
-		if (mode === "supported") expect(context.images).toEqual(images);
+		if (mode === "supported" || mode === "too-many") expect(context.images).toEqual([images[0]]);
 		else expect(context).not.toHaveProperty("images");
 	});
 	it("uses the real runtime with catalog model, runtime auth, full state and supported choices", async () => {

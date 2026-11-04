@@ -149,7 +149,9 @@ export function readDecision(entry: SessionEntry): EffortDecision | undefined {
 function isClassifierDiagnostics(value: unknown): value is ClassifierDiagnostics {
 	if (!isRecord(value) || !["request", "validation", "complete"].includes(String(value.stage)) ||
 		(value.errorCode !== undefined && !CLASSIFIER_ERROR_CODES.some((code) => code === value.errorCode)) ||
-		!Object.keys(value).every((key) => ["stage", "errorCode", "stopReason", "responseType", "responseCharacters", "rawText", "rawTextTruncated"].includes(key))) return false;
+		!Object.keys(value).every((key) => ["stage", "errorCode", "stopReason", "responseType", "responseCharacters", "rawText", "rawTextTruncated", "imageWarning", "imagesSent"].includes(key))) return false;
+	if (value.imageWarning !== undefined && !["unsupported", "invalid_image", "image_limits", "request_limits"].includes(String(value.imageWarning))) return false;
+	if (value.imagesSent !== undefined && (!Number.isSafeInteger(value.imagesSent) || Number(value.imagesSent) < 0)) return false;
 	if (value.stopReason !== undefined && !["stop", "error", "aborted"].includes(String(value.stopReason))) return false;
 	if (value.responseType === undefined) return value.responseCharacters === undefined && value.rawText === undefined && value.rawTextTruncated === undefined;
 	return value.responseType === "object" &&

@@ -2,12 +2,10 @@ import type { ImageContent, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { ClassifierRegistry } from "./backends.ts";
 import type { SelectorBackend } from "./settings.ts";
 import type { EffortState } from "./router.ts";
+import { prepareSelectorImages, type ImageWarning } from "./selector-images.ts";
 import { getEffortInstructions, getEffortCriteria } from "./effort-policy.ts";
 
 export const CLASSIFIER_RESPONSE_TEXT_LIMIT = 8_192;
-// 只发送有界的当前轮图片；超限时整组退回文字，避免裁掉标注或误选其中一张。
-export const CLASSIFIER_MAX_IMAGES = 4;
-export const CLASSIFIER_MAX_IMAGE_BASE64_CHARACTERS = 8 * 1024 * 1024;
 export const CLASSIFIER_ERROR_CODES = [
 	"request_cancelled", "request_failed", "provider_aborted", "model_unavailable",
 	"invalid_envelope", "invalid_model", "invalid_answers", "missing_effort", "unexpected_answers",
@@ -18,6 +16,8 @@ type ClassifierErrorCode = typeof CLASSIFIER_ERROR_CODES[number];
 
 export interface ClassifierDiagnostics {
 	stage: "request" | "validation" | "complete";
+	imageWarning?: ImageWarning;
+	imagesSent?: number;
 	errorCode?: ClassifierErrorCode;
 	stopReason?: "stop" | "error" | "aborted";
 	responseType?: "object";
@@ -79,12 +79,13 @@ export async function selectWithClassifier(registry: ClassifierRegistry, { state
 		report();
 		const classifyStartedAt = performance.now();
 		// Authentication and transport belong to Pi. The caller owns the attempt deadline.
-		// 图片不进入 state 或诊断日志；旧版 Pi／纯文本分类器继续使用原来的文字选档。
-		const sendImages = model.input.includes("image") && images?.length && images.length <= CLASSIFIER_MAX_IMAGES &&
-			images.reduce((total, image) => total + image.data.length, 0) <= CLASSIFIER_MAX_IMAGE_BASE64_CHARACTERS;
-		const response = await registry.classify(model, { state, ...(sendImages ? { images } : {}), questions: {
-			effort: { type: "choice", instructions: getEffortInstructions(!!state.execution), criteria: getEffortCriteria(state.supportedEfforts) },
-		} }, { signal, maxRetries: 0 }).finally(() => { timing.classifyMs = elapsed(classifyStartedAt); });
+		const questions = { effort: { type: "choice" as const, instructions: getEffortInstructions(!!state.execution), criteria: getEffortCriteria(state.supportedEfforts) } };
+		const attachment = await prepareSelectorImages(images ?? [], model, Buffer.byteLength(JSON.stringify({ state, questions })), signal);
+		if (images?.length) diagnostics.imagesSent = attachment.images.length;
+		if (attachment.warning) diagnostics.imageWarning = attachment.warning;
+		report();
+		// 图片仅作为独立附件发送，不进入 JSON 状态或持久化诊断。
+		const response = await registry.classify(model, { state, ...(attachment.images.length ? { images: attachment.images } : {}), questions }, { signal, maxRetries: 0 }).finally(() => { timing.classifyMs = elapsed(classifyStartedAt); });
 		signal.throwIfAborted();
 		diagnostics.stopReason = response.stopReason;
 		// A failed classification may still have billed usage. Do not infer missing counts.
