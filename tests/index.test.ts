@@ -277,7 +277,7 @@ describe("selection modes", () => {
 			expect(JSON.parse(await readFile(join(agentDirectory, "pi-auto.json"), "utf8"))).toMatchObject({ mode: "turn" });
 		} else {
 			await expect(readFile(join(agentDirectory, "pi-auto.json"))).rejects.toMatchObject({ code: "ENOENT" });
-			expect(harness.ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("requires Pi 1.5.0"), "warning");
+			expect(harness.ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("requires Pi 0.99.0"), "warning");
 		}
 	});
 });

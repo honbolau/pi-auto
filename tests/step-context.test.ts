@@ -77,7 +77,7 @@ describe("step execution context", () => {
 		expect(messageText([{ type: "thinking", thinking: "hidden" }, { type: "text", text: "visible" }, { type: "image", data: "hidden" }])).toBe("visible");
 	});
 
-	it.each([["0.99.1", false], ["1.4.9", false], ["1.5.0", true], ["1.5.1", true], ["2.0.0", true], ["invalid", false]])("gates Pi %s", (version, expected) => {
+	it.each([["0.98.9", false], ["0.99.0", true], ["0.99.1", true], ["1.0.0", true], ["1.4.9", true], ["1.5.0", true], ["1.5.1", true], ["2.0.0", true], ["invalid", false]])("gates Pi %s", (version, expected) => {
 		expect(supportsStepMode(version as string)).toBe(expected);
 	});
 });

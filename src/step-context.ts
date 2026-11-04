@@ -20,7 +20,8 @@ export type StepExecutionState = {
 
 export function supportsStepMode(version: string): boolean {
 	const match = /^(\d+)\.(\d+)\./.exec(version);
-	return !!match && (Number(match[1]) > 1 || (Number(match[1]) === 1 && Number(match[2]) >= 5));
+	// 0.99.0 已具备原生分类器和逐请求档位刷新，门槛与已实测兼容范围一致。
+	return !!match && (Number(match[1]) >= 1 || (Number(match[1]) === 0 && Number(match[2]) >= 99));
 }
 
 export function messageText(content: unknown): string {

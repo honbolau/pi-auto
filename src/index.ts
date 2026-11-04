@@ -135,7 +135,7 @@ export default function piAuto(pi: ExtensionAPI): void {
 			if (action === "mode turn" || action === "mode step") {
 				const selected = action === "mode step" ? "step" : "turn";
 				if (selected === "step" && !supportsStepMode(VERSION)) {
-					ctx.ui.notify("Step mode requires Pi 1.5.0 or later; settings unchanged.", "warning");
+					ctx.ui.notify("Step mode requires Pi 0.99.0 or later; settings unchanged.", "warning");
 					return;
 				}
 				try {
@@ -259,7 +259,7 @@ export default function piAuto(pi: ExtensionAPI): void {
 		if (!requireRuntime(ctx)) return;
 		if (settingsLoadFailed) ctx.ui.notify("Could not load pi-auto settings; automatic selection is disabled. Repair pi-auto.json before saving, or use /auto on for this instance.", "warning");
 		restore(ctx);
-		if (mode === "step" && !supportsStepMode(VERSION)) ctx.ui.notify("Step mode requires Pi 1.5.0 or later; using turn mode on this host.", "warning");
+		if (mode === "step" && !supportsStepMode(VERSION)) ctx.ui.notify("Step mode requires Pi 0.99.0 or later; using turn mode on this host.", "warning");
 		if (!settingsLoadFailed) await ensureBackend(ctx);
 	});
 	pi.on("session_tree", (_event, ctx) => restore(ctx));

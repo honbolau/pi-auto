@@ -28,17 +28,17 @@ Choose your chat model with `/model`; no scoped-model configuration is needed. T
 
 The default is **turn**: select once at the beginning of each user task. Existing configurations keep this behavior.
 
-- `/auto mode step`: save experimental per-model-call selection; requires **Pi 1.5.0+** and a physical answering model.
+- `/auto mode step`: save experimental per-model-call selection; requires **Pi 0.99.0+** and a physical answering model.
 - `/auto mode turn`: save the original once-per-user-task behavior.
 - Mode changes preserve the selector and startup default; they do not enable a disabled instance. Switching modes discards pending selection; step selection starts with the next user task.
 
 Step mode retains the full current user goal and adds the latest assistant text, up to four recent tool results and four unresolved failures, and an available active compaction summary. It bounds the number of results, not their text: retained results and the user goal are not clipped. Earlier task/compaction boundaries are not crossed. A successful rerun of the **same tool with the same arguments** resolves its prior failure; a successful edit or unrelated check does not. Different commands that happen to verify the same condition are not inferred equivalent.
 
-The first call is selected in `before_agent_start`; later agent-loop calls are selected at `turn_start`, before Pi 1.5 refreshes the physical request's thinking level. Steering inserted after that boundary is reselected before dispatch. Direct SDK calls and compaction summaries do not trigger this loop hook. Extension-authored custom runs keep their effort without selection. The physical model is never changed and provider payloads are not rewritten. Changing effort can affect prompt caching; cache savings are not guaranteed.
+The first call is selected in `before_agent_start`; later agent-loop calls are selected at `turn_start`, before Pi refreshes the physical request's thinking level. Steering inserted after that boundary is reselected before dispatch. Direct SDK calls and compaction summaries do not trigger this loop hook. Extension-authored custom runs keep their effort without selection. The physical model is never changed and provider payloads are not rewritten. Changing effort can affect prompt caching; cache savings are not guaranteed.
 
 Step selection shares **one 4-second deadline**, including first-time backend discovery, availability, authentication and selection. Failure goes directly to Pi's configured default effort, without an answering-model selection retry. Cancellation retains the current effort. Existing turn-mode deadlines and fallback remain unchanged.
 
-Manually changing effort pauses step selection for the current instance, including later user tasks. The footer shows `auto step paused`; `/auto on` or an explicit mode selection resumes it. For a fixed effort across restarts, use `/auto default off`. A saved step configuration on an older Pi warns and uses turn behavior without rewriting the configuration. Virtual answering models are not supported in step mode.
+Manually changing effort pauses step selection for the current instance, including later user tasks. The footer shows `auto step paused`; `/auto on` or an explicit mode selection resumes it. For a fixed effort across restarts, use `/auto default off`. Pi versions below 0.99.0 are unsupported; step selection does not require Pi 1.5-specific APIs. Virtual answering models are not supported in step mode.
 
 **Privacy:** enabling step mode sends tool-result text and intermediate assistant progress to the saved selector provider without redaction, in addition to the existing task context. Standalone tool-call arguments and thinking blocks are excluded, but tool output can itself contain secrets or echo arguments. No extra model is called to summarize history. Execution input is not copied into diagnostics, but selector reasons or debug responses may repeat it; step decisions record `mode: "step"`. Use a trusted selector or keep step mode disabled for sensitive work.
 
@@ -201,7 +201,7 @@ Instructions, model information, and effort options are additional input. The se
 
 ## Pi compatibility
 
-Development dependencies are pinned to Pi **1.5.0**. CI runs type checking and the test suite against Pi **0.99.1** and **1.5.0**. Step runtime/lifecycle tests are gated to Pi 1.5.0+; turn compatibility and pure state/schema tests also run on the older host.
+Development dependencies are pinned to Pi **1.5.0**. CI runs type checking and the full test suite against Pi **0.99.0**, **0.99.1**, and **1.5.0**, including step lifecycle and real AgentSession request-boundary tests on all three hosts.
 
 In turn mode, only user-prompt runs trigger effort selection. Step mode additionally selects before later model calls within those user runs. Since Pi 1.2, extensions can start runs with custom messages (`sendMessage(..., { triggerTurn: true })`); those runs keep the current effort and latest selection diagnostics, without calling the selector or cancelling an in-flight user selection. The message itself is still processed normally. Legacy user events without `messageType` continue to select effort.
 
