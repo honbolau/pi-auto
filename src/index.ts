@@ -1,3 +1,4 @@
+import { clipboardImages } from "./clipboard-images.ts";
 import { selectionImages } from "./selector-images.ts";
 import { join } from "node:path";
 import {
@@ -555,12 +556,15 @@ async function planForEvent(
 	execution?: StepExecutionState,
 ) {
 	const contextEntries = ctx.sessionManager.buildContextEntries();
+	// TUI 粘贴截图只插入临时路径，分类器选档前补读；聊天选档及主模型输入保持不变。
+	const clipboard = selectClassifier ? await clipboardImages(event.prompt, signal) : { images: [], failed: false };
+	if (clipboard.failed) ctx.ui.notify("pi-auto: some clipboard screenshots could not be read; effort selection may have incomplete image context.", "warning");
 	return withAbort(planEffort(
 		{
 			task: event.prompt,
 			// step 加入当前任务最新验证图，用户新任务及压缩边界隔离旧截图。
-			images: selectionImages(event.images ?? [], contextEntries, !!execution),
-			hasImages: (event.images?.length ?? 0) > 0 || hasContextImages(contextEntries),
+			images: selectionImages([...(event.images ?? []), ...clipboard.images], contextEntries, !!execution),
+			hasImages: (event.images?.length ?? 0) > 0 || clipboard.images.length > 0 || hasContextImages(contextEntries),
 			currentModel: ctx.model,
 			...(selectorModel ? { selectorModel } : {}),
 			currentEffort: ctx.thinkingLevel ?? "off",

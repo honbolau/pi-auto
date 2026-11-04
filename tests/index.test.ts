@@ -322,6 +322,17 @@ describe("selection modes", () => {
 });
 
 describe.skipIf(!supportsStepMode(VERSION))("step selection lifecycle", () => {
+	it("reads TUI clipboard paths before the first classifier call", async () => {
+		const file = join(tmpdir(), "pi-clipboard-2622b15b-8def-4198-a9e5-79170485da00.png");
+		try {
+			await writeFile(file, "clipboard fixture");
+			const h = await stepHarness();
+			await h.start(file + " 修复标注问题");
+			expect(vi.mocked(selectWithClassifier).mock.calls[0]?.[1].images).toEqual([
+				{ type: "image", mimeType: "image/png", data: Buffer.from("clipboard fixture").toString("base64") },
+			]);
+		} finally { await rm(file, { force: true }); }
+	});
 	async function stepHarness() {
 		await writeFile(join(agentDirectory, "pi-auto.json"), JSON.stringify({
 			mode: "step", backend: { type: "classifier", provider: "typesafe", id: "jev-latest" },
