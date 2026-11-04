@@ -4,6 +4,6 @@ import { defineConfig } from "vitest/config";
 // spec files; only the extension's own tests belong to this suite.
 export default defineConfig({
 	test: {
-		include: ["tests/**/*.test.ts"],
+		include: ["tests/**/*.test.{ts,mjs}"],
 	},
 });

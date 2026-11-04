@@ -38,6 +38,15 @@ describe("selector settings schema", () => {
 		expect(isBackend(initial)).toBe(false);
 	});
 
+	it.each(["turn", "step"] as const)("persists %s mode without replacing selector or defaults", (mode) => {
+		writeFileSync(path, JSON.stringify({ backend: { type: "classifier", provider: "openrouter", id: "~typesafe/jev-latest" }, defaultEnabled: false }));
+		writeSettings(path, { mode });
+		expect(readSettings(path)).toMatchObject({ mode, defaultEnabled: false, backend: { provider: "openrouter" } });
+	});
+	it.each(["auto", null, 1])("rejects invalid mode %j without overwriting settings", (mode) => {
+		writeFileSync(path, JSON.stringify({ mode }));
+		expect(() => writeSettings(path, { defaultEnabled: true })).toThrow("Invalid pi-auto settings");
+	});
 	it("keeps an absent backend explicitly unselected", () => {
 		expect(readSettings(path)).toEqual({});
 		writeSettings(path, { defaultEnabled: false });

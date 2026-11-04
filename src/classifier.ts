@@ -2,7 +2,7 @@ import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { ClassifierRegistry } from "./backends.ts";
 import type { SelectorBackend } from "./settings.ts";
 import type { EffortState } from "./router.ts";
-import { EFFORT_INSTRUCTIONS, getEffortCriteria } from "./effort-policy.ts";
+import { getEffortInstructions, getEffortCriteria } from "./effort-policy.ts";
 
 export const CLASSIFIER_RESPONSE_TEXT_LIMIT = 8_192;
 export const CLASSIFIER_ERROR_CODES = [
@@ -76,7 +76,7 @@ export async function selectWithClassifier(registry: ClassifierRegistry, { state
 		const classifyStartedAt = performance.now();
 		// Authentication and transport belong to Pi. The caller owns the attempt deadline.
 		const response = await registry.classify(model, { state, questions: {
-			effort: { type: "choice", instructions: EFFORT_INSTRUCTIONS, criteria: getEffortCriteria(state.supportedEfforts) },
+			effort: { type: "choice", instructions: getEffortInstructions(!!state.execution), criteria: getEffortCriteria(state.supportedEfforts) },
 		} }, { signal, maxRetries: 0 }).finally(() => { timing.classifyMs = elapsed(classifyStartedAt); });
 		signal.throwIfAborted();
 		diagnostics.stopReason = response.stopReason;

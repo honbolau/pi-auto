@@ -5,6 +5,7 @@ import { createAssistantMessageEventStream, getCurrentSystemPrompt, InMemoryCred
 import {
 	SessionManager,
 	SettingsManager,
+	VERSION,
 	ModelRegistry,
 	ModelRuntime,
 	type ExtensionAPI,
@@ -18,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import piAuto from "../src/index.ts";
 import { selectWithClassifier, type ClassifierDecision, type ClassifierTiming } from "../src/classifier.ts";
 import { DECISION_ENTRY_TYPE, readDecision } from "../src/selection-ui.ts";
+import { supportsStepMode } from "../src/step-context.ts";
 
 vi.mock("../src/classifier.ts", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../src/classifier.ts")>();
@@ -257,9 +259,200 @@ describe("custom-message startup compatibility", () => {
 	});
 });
 
+describe("selection modes", () => {
+	it("keeps turn mode as the default and never selects on later turn_start events", async () => {
+		const harness = createHarness(createModel());
+		await harness.start("Task");
+		await harness.emit({ type: "turn_start", turnIndex: 0, timestamp: 0 });
+		await harness.emit({ type: "turn_start", turnIndex: 1, timestamp: 0 });
+		expect(harness.complete).toHaveBeenCalledTimes(1);
+	});
+
+	it("persists mode changes only when supported", async () => {
+		const harness = createHarness(createModel());
+		await harness.command("mode step");
+		if (supportsStepMode(VERSION)) {
+			expect(JSON.parse(await readFile(join(agentDirectory, "pi-auto.json"), "utf8"))).toMatchObject({ mode: "step" });
+			await harness.command("mode turn");
+			expect(JSON.parse(await readFile(join(agentDirectory, "pi-auto.json"), "utf8"))).toMatchObject({ mode: "turn" });
+		} else {
+			await expect(readFile(join(agentDirectory, "pi-auto.json"))).rejects.toMatchObject({ code: "ENOENT" });
+			expect(harness.ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("requires Pi 1.5.0"), "warning");
+		}
+	});
+});
+
+describe.skipIf(!supportsStepMode(VERSION))("step selection lifecycle", () => {
+	async function stepHarness() {
+		await writeFile(join(agentDirectory, "pi-auto.json"), JSON.stringify({
+			mode: "step", backend: { type: "classifier", provider: "typesafe", id: "jev-latest" },
+		}));
+		return createHarness(createModel());
+	}
+	const turn = (turnIndex: number): ExtensionEvent => ({ type: "turn_start", turnIndex, timestamp: 0 });
+	const fakeDeadlines = () => {
+		vi.useFakeTimers();
+		vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => {
+			const controller = new AbortController();
+			setTimeout(() => controller.abort(), ms);
+			return controller.signal;
+		});
+	};
+
+	it("selects once before the first call and again after tool execution without changing model", async () => {
+		const h = await stepHarness();
+		await h.start("Keep the complete original goal");
+		h.ctx.sessionManager.appendMessage({ role: "user", content: "Keep the complete original goal", timestamp: 0 });
+		await h.emit(turn(0));
+		expect(selectWithClassifier).toHaveBeenCalledTimes(1);
+		h.ctx.sessionManager.appendMessage(routerResponse(createModel(), { content: [
+			{ type: "text", text: "A new hypothesis remains unresolved" },
+			{ type: "toolCall", id: "check", name: "bash", arguments: { command: "run checks" } },
+		] }));
+		h.ctx.sessionManager.appendMessage({ role: "toolResult", toolCallId: "check", toolName: "bash", content: [{ type: "text", text: "Invariant failed" }], isError: true, timestamp: 0 });
+		vi.mocked(selectWithClassifier).mockResolvedValueOnce({ ...classifierDecision, effort: "low" });
+		await h.emit(turn(1));
+		expect(selectWithClassifier).toHaveBeenCalledTimes(2);
+		expect(vi.mocked(selectWithClassifier).mock.lastCall?.[1].state).toMatchObject({
+			task: "Keep the complete original goal",
+			execution: { assistantProgress: "A new hypothesis remains unresolved", unresolvedFailures: [{ text: "Invariant failed" }] },
+		});
+		expect(h.ctx.thinkingLevel).toBe("low");
+		expect(h.pi.setModel).not.toHaveBeenCalled();
+		expect(decisions(h).at(-1)).toMatchObject({ mode: "step", effort: "low" });
+	});
+
+	it("sends execution text to the selector without persisting that text or tool arguments in diagnostics", async () => {
+		const h = await stepHarness();
+		await h.start("Task");
+		h.ctx.sessionManager.appendMessage({ role: "user", content: "Task", timestamp: 0 });
+		await h.emit(turn(0));
+		h.ctx.sessionManager.appendMessage(routerResponse(createModel(), { content: [
+			{ type: "toolCall", id: "private", name: "bash", arguments: { command: "private-tool-argument" } },
+		] }));
+		h.ctx.sessionManager.appendMessage({ role: "toolResult", toolCallId: "private", toolName: "bash", content: [{ type: "text", text: "private-tool-output" }], isError: true, timestamp: 0 });
+		await h.emit(turn(1));
+		const state = vi.mocked(selectWithClassifier).mock.lastCall?.[1].state;
+		expect(JSON.stringify(state)).toContain("private-tool-output");
+		expect(JSON.stringify(state)).not.toContain("private-tool-argument");
+		expect(JSON.stringify(decisions(h))).not.toContain("private-tool-output");
+		expect(JSON.stringify(decisions(h))).not.toContain("private-tool-argument");
+		expect(decisions(h).at(-1)?.routing?.policyVersion).toBe("2");
+	});
+
+	it("does not pause on its own setter but pauses for manual effort until /auto on", async () => {
+		const h = await stepHarness();
+		await h.start("Task");
+		await h.emit({ type: "thinking_level_select", level: "high", previousLevel: "medium" });
+		await h.emit(turn(0));
+		await h.emit(turn(1));
+		expect(selectWithClassifier).toHaveBeenCalledTimes(2);
+		h.pi.setThinkingLevel("low");
+		await h.emit({ type: "thinking_level_select", level: "low", previousLevel: "high" });
+		await h.emit(turn(2));
+		await h.start("Another task while pinned");
+		await h.emit(turn(0));
+		expect(selectWithClassifier).toHaveBeenCalledTimes(2);
+		expect(h.ctx.thinkingLevel).toBe("low");
+		expect(h.ctx.ui.setStatus).toHaveBeenLastCalledWith("pi-auto", expect.stringContaining("paused"));
+		await h.command("on");
+		await h.emit(turn(1));
+		expect(selectWithClassifier).toHaveBeenCalledTimes(3);
+	});
+
+	it("uses the new steering request rather than the earlier task", async () => {
+		const h = await stepHarness();
+		await h.start("Original implementation task");
+		await h.emit(turn(0));
+		await h.emit({ type: "message_end", message: { role: "user", content: "Stop editing; only explain the result.", timestamp: 0 } });
+		expect(selectWithClassifier).toHaveBeenCalledTimes(2);
+		expect(vi.mocked(selectWithClassifier).mock.lastCall?.[1].state.task).toBe("Stop editing; only explain the result.");
+	});
+
+	it("does not classify extension custom runs", async () => {
+		const h = await stepHarness();
+		await h.customStart();
+		await h.emit(turn(0));
+		expect(selectWithClassifier).not.toHaveBeenCalled();
+		await h.start("User task");
+		await h.emit(turn(0));
+		await h.customStart();
+		await h.emit(turn(0));
+		expect(selectWithClassifier).toHaveBeenCalledTimes(1);
+	});
+
+	it("goes directly to Pi default after classifier failure, without a chat retry", async () => {
+		const h = await stepHarness();
+		vi.mocked(selectWithClassifier).mockRejectedValueOnce(new Error("classifier failed"));
+		await h.start("Task");
+		expect(h.complete).not.toHaveBeenCalled();
+		expect(h.ctx.thinkingLevel).toBe("medium");
+		expect(decisions(h).at(-1)).toMatchObject({ actualBackend: "default", mode: "step" });
+		expect(decisions(h).at(-1)?.selectorAttempts).toHaveLength(1);
+	});
+
+	it("enforces one 4-second deadline and ignores a non-cooperative late result", async () => {
+		fakeDeadlines();
+		try {
+			const h = await stepHarness();
+			let release: ((decision: ClassifierDecision) => void) | undefined;
+			vi.mocked(selectWithClassifier).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+			const pending = h.start("Task");
+			await vi.advanceTimersByTimeAsync(4_000);
+			await pending;
+			expect(h.ctx.thinkingLevel).toBe("medium");
+			expect(h.complete).not.toHaveBeenCalled();
+			expect(decisions(h).at(-1)?.selectorAttempts?.[0]).toMatchObject({ timeoutMs: 4000, interruption: "deadline" });
+			release?.(classifierDecision);
+			await Promise.resolve();
+			expect(h.ctx.thinkingLevel).toBe("medium");
+		} finally { vi.useRealTimers(); }
+	});
+
+	it("includes first-time availability discovery in the same 4-second budget", async () => {
+		fakeDeadlines();
+		try {
+			await writeFile(join(agentDirectory, "pi-auto.json"), '{"mode":"step"}');
+			const h = createHarness(createModel());
+			h.ctx.modelRegistry.getAvailableOfType.mockImplementation(() => new Promise(() => {}));
+			const pending = h.start("Task");
+			await vi.advanceTimersByTimeAsync(4_000);
+			await pending;
+			expect(selectWithClassifier).not.toHaveBeenCalled();
+			expect(h.complete).not.toHaveBeenCalled();
+			expect(h.ctx.thinkingLevel).toBe("medium");
+		} finally { vi.useRealTimers(); }
+	});
+
+	it("does not downgrade a virtual router's selection level", async () => {
+		await writeFile(join(agentDirectory, "pi-auto.json"), '{"mode":"step"}');
+		const h = createHarness(createModel("virtual", { api: "pi-virtual" }));
+		await h.start("Task");
+		await h.emit(turn(0));
+		await h.emit(turn(1));
+		expect(h.complete).not.toHaveBeenCalled();
+		expect(selectWithClassifier).not.toHaveBeenCalled();
+	});
+
+	it("discards an in-flight step after a mode change", async () => {
+		const h = await stepHarness();
+		let release: ((decision: ClassifierDecision) => void) | undefined;
+		vi.mocked(selectWithClassifier).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+		const pending = h.start("Task");
+		await vi.waitFor(() => expect(selectWithClassifier).toHaveBeenCalledTimes(1));
+		await h.command("mode turn");
+		await pending;
+		release?.(classifierDecision);
+		await Promise.resolve();
+		expect(h.ctx.thinkingLevel).toBe("medium");
+		expect(decisions(h)).toEqual([]);
+	});
+});
+
 describe("command completions", () => {
 	it.each([
-		["", ["toggle", "on", "off", "model", "status", "default on", "default off"]],
+		["", ["toggle", "on", "off", "model", "status", "mode turn", "mode step", "default on", "default off"]],
+		["mode ", ["mode turn", "mode step"]],
 		["o", ["on", "off"]],
 		["st", ["status"]],
 		["d", ["default on", "default off"]],

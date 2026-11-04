@@ -1,8 +1,9 @@
 import { getSupportedThinkingLevels, type Api, type AssistantMessage, type Model, type ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { getRecentContext, type ContextSource } from "./recent-context.ts";
-import { EFFORT_INSTRUCTIONS, EFFORT_POLICY_VERSION, getEffortCriteria } from "./effort-policy.ts";
+import { getEffortInstructions, EFFORT_POLICY_VERSION, STEP_EFFORT_POLICY_VERSION, getEffortCriteria } from "./effort-policy.ts";
 import type { SelectClassifier } from "./classifier.ts";
 import type { HistoryMessage } from "./session-context.ts";
+import type { StepExecutionState } from "./step-context.ts";
 
 const MAX_REASON_LENGTH = 160;
 export const ROUTER_RESPONSE_TEXT_LIMIT = 8_192;
@@ -26,6 +27,7 @@ export type EffortState = {
 	model: { id: string; name: string };
 	currentEffort: ModelThinkingLevel;
 	supportedEfforts: ModelThinkingLevel[];
+	execution?: StepExecutionState;
 };
 
 export interface ContextDiagnostics {
@@ -63,6 +65,7 @@ export interface PlanEffortInput {
 	selectorModel?: Model<Api>;
 	currentEffort: ModelThinkingLevel;
 	history: readonly HistoryMessage[];
+	execution?: StepExecutionState;
 	signal: AbortSignal;
 	onDiagnostics?: (diagnostics: RoutingDiagnostics) => void;
 }
@@ -83,7 +86,7 @@ export async function planEffort(input: PlanEffortInput, complete: CompleteRoute
 	if (!model) return { status: "skipped", reason: "No current model is selected" };
 	const efforts = getSupportedThinkingLevels(model);
 	const diagnostics: RoutingDiagnostics = {
-		policyVersion: EFFORT_POLICY_VERSION, supportedEfforts: efforts,
+		policyVersion: input.execution ? STEP_EFFORT_POLICY_VERSION : EFFORT_POLICY_VERSION, supportedEfforts: efforts,
 		taskTruncated: false,
 	};
 	const report = () => {
@@ -114,6 +117,7 @@ export async function planEffort(input: PlanEffortInput, complete: CompleteRoute
 		contextOmitted: context.omitted,
 		model: { id: `${model.provider}/${model.id}`, name: model.name },
 		currentEffort: input.currentEffort, supportedEfforts: efforts,
+		...(input.execution ? { execution: input.execution } : {}),
 	};
 	const selectionStartedAt = performance.now();
 	try {
@@ -125,7 +129,7 @@ export async function planEffort(input: PlanEffortInput, complete: CompleteRoute
 		}
 		const responseText = await complete({
 			model: selectorModel, effort: routerEffort, purpose: "effort", signal: input.signal,
-			systemPrompt: `${EFFORT_INSTRUCTIONS}\nSupported effort criteria: ${JSON.stringify(getEffortCriteria(efforts))}\nReturn JSON only: {"effort":"<supported effort>","reason":"<brief English reason, max 160 characters>"}.`,
+			systemPrompt: `${getEffortInstructions(!!input.execution)}\nSupported effort criteria: ${JSON.stringify(getEffortCriteria(efforts))}\nReturn JSON only: {"effort":"<supported effort>","reason":"<brief English reason, max 160 characters>"}.`,
 			userPrompt: JSON.stringify(state),
 		});
 		input.signal.throwIfAborted();

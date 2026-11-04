@@ -21,6 +21,7 @@ export interface SelectionAttempt {
 }
 
 export interface EffortDecision {
+	mode?: "turn" | "step";
 	status: "selected" | "kept" | "cancelled";
 	actualBackend?: string;
 	model: string;
@@ -74,6 +75,7 @@ export const renderDecisionEntry: EntryRenderer<EffortDecision> = (entry, { expa
 	if (!decision) return undefined;
 
 	let heading = formatAutoEffort(theme, decision.effort, decision.actualBackend);
+	if (decision.mode === "step") heading += theme.fg("dim", " · step");
 	if (!decision.actualBackend && decision.routerModel) {
 		const modelName = decision.routerModel.slice(decision.routerModel.indexOf("/") + 1);
 		heading += theme.fg("dim", ` · ${inlineText(modelName)}`);
