@@ -1,4 +1,4 @@
-import { getSupportedThinkingLevels, type Api, type AssistantMessage, type Model, type ModelThinkingLevel } from "@earendil-works/pi-ai";
+import { getSupportedThinkingLevels, type Api, type AssistantMessage, type ImageContent, type Model, type ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { getRecentContext, type ContextSource } from "./recent-context.ts";
 import { getEffortInstructions, EFFORT_POLICY_VERSION, STEP_EFFORT_POLICY_VERSION, getEffortCriteria } from "./effort-policy.ts";
 import type { SelectClassifier } from "./classifier.ts";
@@ -59,6 +59,8 @@ export type CompleteRouter = (invocation: RouterInvocation) => Promise<string>;
 
 export interface PlanEffortInput {
 	task: string;
+	/** 当前轮图片独立传输，避免混进 JSON 状态、聊天回退或持久化诊断。 */
+	images?: ImageContent[];
 	hasImages: boolean;
 	currentModel: Model<Api> | undefined;
 	/** The judge only; candidates and the returned plan belong to currentModel. */
@@ -122,7 +124,7 @@ export async function planEffort(input: PlanEffortInput, complete: CompleteRoute
 	const selectionStartedAt = performance.now();
 	try {
 		if (selectClassifier) {
-			const decision = await selectClassifier({ state, signal: input.signal });
+			const decision = await selectClassifier({ state, ...(input.images?.length ? { images: input.images } : {}), signal: input.signal });
 			input.signal.throwIfAborted();
 			if (!efforts.includes(decision.effort)) throw new Error("Classifier returned an unsupported effort");
 			return { status: "selected", plan: { model, effort: decision.effort, reason: "Selected by Classifier Choice", routerEffort: undefined } };

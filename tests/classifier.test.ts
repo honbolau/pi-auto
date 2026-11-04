@@ -48,6 +48,20 @@ afterEach(() => {
 });
 
 describe("native Classifier adapter", () => {
+	it.each(["supported", "text-only", "too-many", "too-large"])("bounds image forwarding: %s", async (mode) => {
+		const models = await registry.getAvailableOfType("classifier", "typesafe");
+		const model = models.find((item) => item.id === JEV_MODEL);
+		expect(model).toBeDefined();
+		vi.spyOn(registry, "getAvailableOfType").mockResolvedValue(model ? [{ ...model, input: mode === "text-only" ? ["text"] : ["text", "image"] }] : []);
+		const classify = vi.spyOn(registry, "classify");
+		const images = Array.from({ length: mode === "too-many" ? 5 : 1 }, () => ({
+			type: "image" as const, data: mode === "too-large" ? "a".repeat(8 * 1024 * 1024 + 1) : "aGVsbG8=", mimeType: "image/png",
+		}));
+		await selectWithClassifier(registry, { ...invocation, images });
+		const context = classify.mock.calls[0]?.[1] as { images?: unknown };
+		if (mode === "supported") expect(context.images).toEqual(images);
+		else expect(context).not.toHaveProperty("images");
+	});
 	it("uses the real runtime with catalog model, runtime auth, full state and supported choices", async () => {
 		const classify = vi.spyOn(registry, "classify");
 		const state = { ...invocation.state, task: "x".repeat(25_000), recentConversation: "y".repeat(30_000) };

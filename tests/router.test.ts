@@ -34,6 +34,16 @@ function input(currentModel: Model<Api> | undefined = createModel()) {
 }
 
 describe("planEffort", () => {
+	it("passes current images separately without serializing them into state", async () => {
+		const images = [{ type: "image" as const, data: "private-image", mimeType: "image/png" }];
+		const select = vi.fn<SelectClassifier>(async () => ({ effort: "low", model: "jev", confidence: 1, probabilities: { low: 1 } }));
+		await planEffort({ ...input(), images, hasImages: true }, vi.fn(), select);
+		expect(select.mock.calls[0]?.[0].images).toEqual(images);
+		expect(JSON.stringify(select.mock.calls[0]?.[0].state)).not.toContain("private-image");
+		const complete = vi.fn(async () => '{"effort":"low"}');
+		await planEffort({ ...input(), images, hasImages: true }, complete);
+		expect(JSON.stringify(complete.mock.calls)).not.toContain("private-image");
+	});
 	it("uses structured Classifier results instead of parsing a chat response", async () => {
 		const complete = vi.fn();
 		const selectClassifier = vi.fn<SelectClassifier>(async () => ({ effort: "low", model: "jev-latest", confidence: 0.1, probabilities: { low: 1 } }));

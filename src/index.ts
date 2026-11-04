@@ -107,7 +107,7 @@ export default function piAuto(pi: ExtensionAPI): void {
 				backend = selected;
 				resolveInitialCurrentModel = false;
 				if (selected.type === "classifier") {
-					const message = `pi-auto selected ${backendLabel(selected)}, an available classifier in Pi, and saved it as the effort selector. It will receive your current task and recent-turn selection context. Use /auto model to change this, or choose a fixed chat model in the chat model tab.`;
+					const message = `pi-auto selected ${backendLabel(selected)}, an available classifier in Pi, and saved it as the effort selector. It will receive your current task and recent-turn selection context. Image-capable classifiers also receive current-turn attachments (up to 4 images and 8 MiB of base64 combined). Use /auto model to change this, or choose a fixed chat model in the chat model tab.`;
 					if (ctx.mode === "tui" || ctx.mode === "rpc") ctx.ui.notify(message, "info");
 					else console.error(message);
 				}
@@ -529,11 +529,13 @@ export default function piAuto(pi: ExtensionAPI): void {
 	pi.on("message_end", async (event, ctx) => {
 		if (!isStepMode() || !stepTask || event.message.role !== "user") return;
 		const prompt = messageText(event.message.content);
-		if (prompt === stepTask.prompt) return;
+		const images = Array.isArray(event.message.content) ? event.message.content.filter((part) => part.type === "image") : [];
+		const previousImages = stepTask.images ?? [];
+		// 同文换图也是新指令；普通用户消息回放时不重复选档。
+		if (prompt === stepTask.prompt && images.length === previousImages.length &&
+			images.every((image, index) => image.data === previousImages[index]?.data && image.mimeType === previousImages[index]?.mimeType)) return;
 		// steering 在 turn_start 后才入列，因此在 prepareRequest 前补选新用户指令。
-		stepTask = { prompt, ...(Array.isArray(event.message.content) ? {
-			images: event.message.content.filter((part) => part.type === "image"),
-		} : {}) };
+		stepTask = { prompt, images };
 		await selectForTask(stepTask, ctx, buildStepExecution([]));
 	});
 	// 放在原有会话处理器之后，保持选档初始化的执行顺序。
@@ -554,6 +556,8 @@ async function planForEvent(
 	return withAbort(planEffort(
 		{
 			task: event.prompt,
+			// 仅复用当前用户轮的附件，不收集历史图片或工具返回的图片。
+			...(event.images?.length ? { images: event.images } : {}),
 			hasImages: (event.images?.length ?? 0) > 0 || hasContextImages(contextEntries),
 			currentModel: ctx.model,
 			...(selectorModel ? { selectorModel } : {}),

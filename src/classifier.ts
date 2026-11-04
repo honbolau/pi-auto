@@ -1,10 +1,13 @@
-import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
+import type { ImageContent, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { ClassifierRegistry } from "./backends.ts";
 import type { SelectorBackend } from "./settings.ts";
 import type { EffortState } from "./router.ts";
 import { getEffortInstructions, getEffortCriteria } from "./effort-policy.ts";
 
 export const CLASSIFIER_RESPONSE_TEXT_LIMIT = 8_192;
+// 只发送有界的当前轮图片；超限时整组退回文字，避免裁掉标注或误选其中一张。
+export const CLASSIFIER_MAX_IMAGES = 4;
+export const CLASSIFIER_MAX_IMAGE_BASE64_CHARACTERS = 8 * 1024 * 1024;
 export const CLASSIFIER_ERROR_CODES = [
 	"request_cancelled", "request_failed", "provider_aborted", "model_unavailable",
 	"invalid_envelope", "invalid_model", "invalid_answers", "missing_effort", "unexpected_answers",
@@ -39,6 +42,7 @@ export interface ClassifierTiming {
 
 export interface ClassifierInvocation {
 	state: EffortState;
+	images?: ImageContent[];
 	signal: AbortSignal;
 	onTiming?: (timing: Readonly<ClassifierTiming>) => void;
 	onDiagnostics?: (diagnostics: Readonly<ClassifierDiagnostics>) => void;
@@ -54,7 +58,7 @@ export interface ClassifierDecision {
 
 export type SelectClassifier = (invocation: ClassifierInvocation) => Promise<ClassifierDecision>;
 
-export async function selectWithClassifier(registry: ClassifierRegistry, { state, signal, onTiming, onDiagnostics, debugResponses = false }: ClassifierInvocation, backend: Extract<SelectorBackend, { type: "classifier" }>): Promise<ClassifierDecision> {
+export async function selectWithClassifier(registry: ClassifierRegistry, { state, images, signal, onTiming, onDiagnostics, debugResponses = false }: ClassifierInvocation, backend: Extract<SelectorBackend, { type: "classifier" }>): Promise<ClassifierDecision> {
 	const startedAt = performance.now();
 	const timing: ClassifierTiming = {};
 	const diagnostics: ClassifierDiagnostics = { stage: "request" };
@@ -75,7 +79,10 @@ export async function selectWithClassifier(registry: ClassifierRegistry, { state
 		report();
 		const classifyStartedAt = performance.now();
 		// Authentication and transport belong to Pi. The caller owns the attempt deadline.
-		const response = await registry.classify(model, { state, questions: {
+		// 图片不进入 state 或诊断日志；旧版 Pi／纯文本分类器继续使用原来的文字选档。
+		const sendImages = model.input.includes("image") && images?.length && images.length <= CLASSIFIER_MAX_IMAGES &&
+			images.reduce((total, image) => total + image.data.length, 0) <= CLASSIFIER_MAX_IMAGE_BASE64_CHARACTERS;
+		const response = await registry.classify(model, { state, ...(sendImages ? { images } : {}), questions: {
 			effort: { type: "choice", instructions: getEffortInstructions(!!state.execution), criteria: getEffortCriteria(state.supportedEfforts) },
 		} }, { signal, maxRetries: 0 }).finally(() => { timing.classifyMs = elapsed(classifyStartedAt); });
 		signal.throwIfAborted();
