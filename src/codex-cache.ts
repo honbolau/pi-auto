@@ -33,8 +33,11 @@ function checkpoint(value: unknown): value is Checkpoint {
 }
 
 export function supportsCodexCache(model: Model<Api> | undefined): boolean {
-	if (model?.provider !== "openai-codex" || model.api !== "openai-codex-responses" || model.id !== "gpt-6.1-sol") return false;
-	// 只启用已实测的官方后端，不推断兼容代理或其他 GPT 模型也支持更新项。
+	if (model?.provider !== "openai-codex" || model.api !== "openai-codex-responses" || !model.reasoning) return false;
+	// Pi 的 Codex 目录尚未暴露后端更新能力位，按官方 GPT-6 及后续型号族识别，不能仅放行 Sol。
+	const family = /^gpt-([1-9]\d*)(?:\.\d+)?(?:-[a-z0-9]+)*$/.exec(model.id);
+	if (!family || Number(family[1]) < 6) return false;
+	// 型号范围与端点能力分开判断，不把官方支持范围自动套用到代理或其他接口。
 	try {
 		const url = new URL(model.baseUrl);
 		return url.protocol === "https:" && url.host === "chatgpt.com" && !url.username && !url.password && !url.search && !url.hash &&

@@ -128,9 +128,11 @@ describe("Codex cache history", () => {
 });
 
 describe("supported Codex boundary", () => {
-	it("accepts only the tested model on the official Codex endpoint", () => {
-		expect(supportsCodexCache(model)).toBe(true);
-		for (const patch of [{ id: "gpt-6-astra" }, { provider: "openai" }, { api: "openai-responses" as const },
+	it.each(["gpt-6", "gpt-6-astra", "gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-7", "gpt-10.2-codex"])("recognizes the documented GPT-6+ model family: %s", (id) => {
+		expect(supportsCodexCache({ ...model, id })).toBe(true);
+	});
+	it("rejects older models, malformed names, non-reasoning models, and unrelated endpoints", () => {
+		for (const patch of [{ id: "gpt-5.6-sol" }, { id: "gpt-5-codex" }, { id: "gpt-06-sol" }, { id: "gpt-6oops" }, { id: "gpt-6.1-sol/alias" }, { id: "o3" }, { reasoning: false }, { provider: "openai" }, { api: "openai-responses" as const },
 			{ baseUrl: "https://api.openai.com/v1" }, { baseUrl: "https://proxy.example/backend-api" },
 			{ baseUrl: "https://chatgpt.com/other" }, { baseUrl: "http://chatgpt.com/backend-api" }]) {
 			expect(supportsCodexCache({ ...model, ...patch })).toBe(false);

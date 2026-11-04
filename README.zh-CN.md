@@ -46,13 +46,13 @@ step 使用**统一的 4 秒总期限**，覆盖首次后端发现、可用性�
 
 执行 **`/auto cache on`** 开启，`/auto cache off` 关闭。`codexCache` 保存到 `pi-auto.json`，默认 **false**。它与 turn/step 和自动选档开关独立：开启后，即使 `/auto off`，手动改档也会经过保缓存适配。
 
-- **仅支持：** 官方 HTTPS `chatgpt.com/backend-api` Codex 后端上的 `openai-codex/gpt-6.1-sol`，API 为 `openai-codex-responses`。其他模型、自定义端点、API key Responses 请求及虚拟模型保持原样。
+- **型号范围：** 官方 HTTPS `chatgpt.com/backend-api` Codex 后端上，`openai-codex` 的 GPT-6 及后续推理模型（包括 Astra、Luna、Sol、Terra 变体），API 为 `openai-codex-responses`。其他模型、自定义端点、API key Responses 请求及虚拟模型保持原样。
 - 首次符合条件的请求固定顶层 `reasoning.effort`；之后通过追加 `configuration_update` 切档，包括工具结果后直接继续的请求。旧更新按原位置重放，保持既有输入前缀不变。只改变发送格式，不改变选中的档位或物理模型。
 - 会话自定义条目仅保存档位、位置及输入／设置的 SHA-256 指纹，**不额外保存提示词、工具结果、凭据或完整 payload**。重载、恢复、fork 和树导航只恢复当前分支；相同重试不重复记账。取消的尝试可能留下检查点，后续仍一致重放。
 - 成功压缩、模型选择、旧输入／请求设置变化或切换 cache 开关时建立新基线；失败或取消的压缩不重置。按路由键排除摘要和选择器请求。已有原生更新项时不重复适配；不要叠加竞争的 payload 适配器。
 - 它避免的是改档导致的前缀变化，**不保证缓存命中**，不防止缓存过期，也不能保住被其他扩展改写的前缀。新基线可能出现冷请求。不支持或无法识别的 payload 保持 Pi 原行为；会话元数据写入失败时，由 Pi 报告扩展错误并保留原请求，本次适配失败可能损失缓存。
 
-已在 Pi 1.5.0 上用真实插件、Codex 登录、工具继续请求及重开会话实测。另用 low/max 对照获得更新影响推理行为的证据；推理 token 不是服务端有效档位回执。这条已测路径不需要 OpenAI API key 或额外代理。
+型号判断遵循文档中的 GPT-6+ 范围，不等同于逐模型探测服务端能力；不可用模型仍由 Pi／提供商正常报错，不切换端点或换模型重试。已在 Pi 1.5.0 上用真实插件、Codex 登录、工具继续请求及重开会话实测 `gpt-6-astra`、`gpt-6-luna`、`gpt-6-sol`、`gpt-6.1-sol`、`gpt-6.1-terra`。个别请求仍可能零命中；协议接受和前缀不变不等于必然命中缓存。另用 low/max 对照获得更新影响推理行为的证据；推理 token 不是服务端有效档位回执。这条已测路径不需要 OpenAI API key 或额外代理。
 
 下文未特别说明时，选档、回退及输入范围均指默认 **turn** 行为。
 

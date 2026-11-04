@@ -147,7 +147,7 @@ export default function piAuto(pi: ExtensionAPI): void {
 				}
 				codexCacheEnabled = selected;
 				ctx.ui.notify(selected
-					? "Experimental Codex cache preservation enabled for official openai-codex/gpt-6.1-sol requests. Other models and endpoints are unchanged."
+					? "Experimental Codex cache preservation enabled for GPT-6 and later reasoning models on the official openai-codex endpoint. Other models and endpoints are unchanged."
 					: "Codex cache preservation disabled; normal request-level effort restored.", "info");
 				return;
 			}
