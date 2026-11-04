@@ -20,6 +20,7 @@ import { readSettings, writeSettings, backendLabel, type SelectorBackend, type S
 import { availableClassifiers, defaultBackend } from "./backends.ts";
 import { showModelSelector } from "./model-selector.ts";
 import { buildStepExecution, messageText, supportsStepMode, type StepExecutionState } from "./step-context.ts";
+import { registerCodexCache } from "./codex-cache.ts";
 
 type SelectionTask = Pick<Extract<BeforeAgentStartEvent, { prompt: string }>, "prompt" | "images">;
 const STEP_TIMEOUT_MS = 4_000;
@@ -33,6 +34,7 @@ export default function piAuto(pi: ExtensionAPI): void {
 	const settingsPath = join(getAgentDir(), "pi-auto.json");
 	let enabled: boolean;
 	let mode: SelectionMode = "turn";
+	let codexCacheEnabled = false;
 	let stepPaused = false;
 	let stepTask: SelectionTask | undefined;
 	let skipFirstStep = false;
@@ -45,6 +47,7 @@ export default function piAuto(pi: ExtensionAPI): void {
 		const settings = readSettings(settingsPath);
 		enabled = settings.defaultEnabled ?? true;
 		mode = settings.mode ?? "turn";
+		codexCacheEnabled = settings.codexCache ?? false;
 		resolveInitialCurrentModel = settings.backend?.type === "current-model";
 		backend = settings.backend?.type === "current-model" ? undefined : settings.backend;
 	}
@@ -122,16 +125,32 @@ export default function piAuto(pi: ExtensionAPI): void {
 
 	pi.registerEntryRenderer(DECISION_ENTRY_TYPE, renderDecisionEntry);
 	pi.registerCommand("auto", {
-		description: "Control automatic effort selection (toggle, on, off, model, status, mode turn/step, default on/off)",
+		description: "Control automatic effort selection (toggle, on, off, model, status, mode turn/step, default on/off, cache on/off)",
 		getArgumentCompletions: (prefix) => {
 			const normalized = prefix.trimStart().toLowerCase().replace(/\s+/g, " ");
-			const matches = ["toggle", "on", "off", "model", "status", "mode turn", "mode step", "default on", "default off"]
+			const matches = ["toggle", "on", "off", "model", "status", "mode turn", "mode step", "default on", "default off", "cache on", "cache off"]
 				.filter((value) => value.startsWith(normalized));
 			return matches.length ? matches.map((value) => ({ value, label: value })) : null;
 		},
 		handler: async (args, ctx) => {
 			if (!requireRuntime(ctx)) return;
 			const action = args.trim().toLowerCase().replace(/\s+/g, " ") || "toggle";
+			if (action === "cache on" || action === "cache off") {
+				const selected = action === "cache on";
+				try {
+					// 开关独立于自动选档；关闭或重新开启时不沿用中间可能漏掉的请求历史。
+					if (selected !== codexCacheEnabled) codexCache.reset();
+					writeSettings(settingsPath, { codexCache: selected });
+				} catch {
+					ctx.ui.notify("Could not save Codex cache preservation; current setting unchanged.", "error");
+					return;
+				}
+				codexCacheEnabled = selected;
+				ctx.ui.notify(selected
+					? "Experimental Codex cache preservation enabled for official openai-codex/gpt-6.1-sol requests. Other models and endpoints are unchanged."
+					: "Codex cache preservation disabled; normal request-level effort restored.", "info");
+				return;
+			}
 			if (action === "mode turn" || action === "mode step") {
 				const selected = action === "mode step" ? "step" : "turn";
 				if (selected === "step" && !supportsStepMode(VERSION)) {
@@ -233,14 +252,15 @@ export default function piAuto(pi: ExtensionAPI): void {
 					model: currentModel ? modelKey(currentModel) : "none",
 					effort: snapshot.effort,
 					backend: (configured ? `${configured.type}: ${backendLabel(configured)}` : "Not selected") +
-						(isStepMode() ? ` · step${stepPaused ? " (paused by manual effort)" : ""}` : ""),
+						(isStepMode() ? ` · step${stepPaused ? " (paused by manual effort)" : ""}` : "") +
+						(codexCacheEnabled ? " · Codex cache preservation on" : ""),
 					availability,
 					supportedEfforts: currentModel ? getSupportedThinkingLevels(currentModel) : [],
 					...(snapshot.last ? { last: snapshot.last } : {}),
 				});
 				return;
 			}
-			ctx.ui.notify("Usage: /auto [toggle|on|off|model|status|mode turn|mode step|default on|default off]", "warning");
+			ctx.ui.notify("Usage: /auto [toggle|on|off|model|status|mode turn|mode step|default on|default off|cache on|cache off]", "warning");
 		},
 	});
 
@@ -516,6 +536,8 @@ export default function piAuto(pi: ExtensionAPI): void {
 		} : {}) };
 		await selectForTask(stepTask, ctx, buildStepExecution([]));
 	});
+	// 放在原有会话处理器之后，保持选档初始化的执行顺序。
+	const codexCache = registerCodexCache(pi, () => codexCacheEnabled);
 }
 
 async function planForEvent(

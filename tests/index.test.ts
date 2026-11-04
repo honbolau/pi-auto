@@ -92,7 +92,7 @@ function createHarness(
 ) {
 	let activeModel = currentModel;
 	let activeEffort: ModelThinkingLevel = currentModel?.reasoning ? "medium" : "off";
-	const handlers = new Map<string, ExtensionHandler<ExtensionEvent>>();
+	const handlers = new Map<string, ExtensionHandler<ExtensionEvent>[]>();
 	const complete = vi.fn(async (
 		model: Model<Api>,
 		_context: Context,
@@ -113,7 +113,7 @@ function createHarness(
 		registerCommand: vi.fn<ExtensionAPI["registerCommand"]>(),
 		registerEntryRenderer: vi.fn<ExtensionAPI["registerEntryRenderer"]>(),
 		appendEntry: vi.fn((type: string, data: unknown) => { sessionManager.appendCustomEntry(type, data); }),
-		on: (name: string, handler: ExtensionHandler<ExtensionEvent>) => handlers.set(name, handler),
+		on: (name: string, handler: ExtensionHandler<ExtensionEvent>) => handlers.set(name, [...(handlers.get(name) ?? []), handler]),
 		setModel: vi.fn(async (model: Model<Api>) => { activeModel = model; return true; }),
 		setThinkingLevel: vi.fn((effort: ModelThinkingLevel) => { activeEffort = effort; }),
 	};
@@ -143,7 +143,12 @@ function createHarness(
 	piAuto(pi as unknown as ExtensionAPI);
 
 	async function emit(event: ExtensionEvent) {
-		return await handlers.get(event.type)?.(event, ctx as unknown as ExtensionContext);
+		let result: unknown;
+		for (const handler of handlers.get(event.type) ?? []) {
+			const next = await handler(event, ctx as unknown as ExtensionContext);
+			if (next !== undefined) result = next;
+		}
+		return result;
 	}
 
 	return {
@@ -187,6 +192,40 @@ function createHarness(
 		},
 	};
 }
+
+describe("Codex cache opt-in commands", () => {
+	it("preserves mode, selector, and disabled automatic selection when toggling cache adaptation", async () => {
+		const saved = { mode: "step", defaultEnabled: false, backend: { type: "classifier", provider: "typesafe", id: "jev-latest" } };
+		await writeFile(join(agentDirectory, "pi-auto.json"), JSON.stringify(saved));
+		const h = createHarness(createModel());
+		await h.command("cache on");
+		expect(JSON.parse(await readFile(join(agentDirectory, "pi-auto.json"), "utf8"))).toEqual({ ...saved, codexCache: true });
+		expect(h.pi.setThinkingLevel).not.toHaveBeenCalled();
+		await h.command("cache off");
+		expect(JSON.parse(await readFile(join(agentDirectory, "pi-auto.json"), "utf8"))).toEqual({ ...saved, codexCache: false });
+	});
+
+	it("keeps manual effort changes cache-safe even with auto disabled, and stops adapting after cache off", async () => {
+		await writeFile(join(agentDirectory, "pi-auto.json"), JSON.stringify({ codexCache: true, defaultEnabled: false }));
+		const h = createHarness(createModel("gpt-6.1-sol", { provider: "openai-codex", api: "openai-codex-responses", baseUrl: "https://chatgpt.com/backend-api" }));
+		const request = { model: "gpt-6.1-sol", prompt_cache_key: h.ctx.sessionManager.getSessionId(), input: [{ role: "user", content: "one" }], reasoning: { effort: "low" } };
+		expect(await h.emit({ type: "before_provider_request", payload: request })).toEqual(request);
+		const high = { ...request, reasoning: { effort: "high" } };
+		expect(await h.emit({ type: "before_provider_request", payload: high })).toMatchObject({ reasoning: { effort: "low" }, input: [...request.input, { type: "configuration_update", reasoning: { effort: "high" } }] });
+		await h.command("cache off");
+		expect(await h.emit({ type: "before_provider_request", payload: high })).toBeUndefined();
+		await h.command("cache on");
+		expect(await h.emit({ type: "before_provider_request", payload: high })).toEqual(high);
+	});
+
+	it("does not overwrite malformed settings when enabling cache adaptation", async () => {
+		await writeFile(join(agentDirectory, "pi-auto.json"), "{broken");
+		const h = createHarness(createModel());
+		await h.command("cache on");
+		expect(await readFile(join(agentDirectory, "pi-auto.json"), "utf8")).toBe("{broken");
+		expect(h.ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Could not save Codex cache"), "error");
+	});
+});
 
 describe("custom-message startup compatibility", () => {
 	it.each(["unsaved", "classifier", "chat"] as const)("keeps effort and avoids all selection side effects for %s backend", async (backend) => {
@@ -451,7 +490,7 @@ describe.skipIf(!supportsStepMode(VERSION))("step selection lifecycle", () => {
 
 describe("command completions", () => {
 	it.each([
-		["", ["toggle", "on", "off", "model", "status", "mode turn", "mode step", "default on", "default off"]],
+		["", ["toggle", "on", "off", "model", "status", "mode turn", "mode step", "default on", "default off", "cache on", "cache off"]],
 		["mode ", ["mode turn", "mode step"]],
 		["o", ["on", "off"]],
 		["st", ["status"]],

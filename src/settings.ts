@@ -6,7 +6,7 @@ export type SelectorBackend = { type: "chat"; provider: string; id: string } | {
 // Read only for the one-time initialization rewrite; never a callable backend.
 type InitialBackend = SelectorBackend | { type: "current-model" };
 export type SelectionMode = "turn" | "step";
-export interface AutoSettings { defaultEnabled?: boolean; backend?: InitialBackend; mode?: SelectionMode; [key: string]: unknown }
+export interface AutoSettings { defaultEnabled?: boolean; backend?: InitialBackend; mode?: SelectionMode; codexCache?: boolean; [key: string]: unknown }
 
 export function readSettings(path: string): AutoSettings {
 	let text: string;
@@ -19,6 +19,7 @@ export function readSettings(path: string): AutoSettings {
 	if (typeof value !== "object" || value === null || Array.isArray(value) ||
 		("defaultEnabled" in value && typeof value.defaultEnabled !== "boolean") ||
 		("mode" in value && value.mode !== "turn" && value.mode !== "step") ||
+		("codexCache" in value && typeof value.codexCache !== "boolean") ||
 		("backend" in value && !(isBackend(value.backend) || isInitialCurrentModel(value.backend)))) throw new Error("Invalid pi-auto settings");
 	return value as AutoSettings;
 }
@@ -35,7 +36,7 @@ function validId(value: unknown): value is string {
 	return typeof value === "string" && value.trim().length > 0 && !/[\u0000-\u001f\u007f-\u009f]/.test(value);
 }
 
-export function writeSettings(path: string, patch: { defaultEnabled?: boolean; backend?: SelectorBackend; mode?: SelectionMode }): void {
+export function writeSettings(path: string, patch: { defaultEnabled?: boolean; backend?: SelectorBackend; mode?: SelectionMode; codexCache?: boolean }): void {
 	// Merge before writing: changing a backend must never erase the startup default.
 	const value = { ...readSettings(path), ...patch };
 	mkdirSync(dirname(path), { recursive: true });

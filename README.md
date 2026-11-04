@@ -34,13 +34,25 @@ The default is **turn**: select once at the beginning of each user task. Existin
 
 Step mode retains the full current user goal and adds the latest assistant text, up to four recent tool results and four unresolved failures, and an available active compaction summary. It bounds the number of results, not their text: retained results and the user goal are not clipped. Earlier task/compaction boundaries are not crossed. A successful rerun of the **same tool with the same arguments** resolves its prior failure; a successful edit or unrelated check does not. Different commands that happen to verify the same condition are not inferred equivalent.
 
-The first call is selected in `before_agent_start`; later agent-loop calls are selected at `turn_start`, before Pi refreshes the physical request's thinking level. Steering inserted after that boundary is reselected before dispatch. Direct SDK calls and compaction summaries do not trigger this loop hook. Extension-authored custom runs keep their effort without selection. The physical model is never changed and provider payloads are not rewritten. Changing effort can affect prompt caching; cache savings are not guaranteed.
+The first call is selected in `before_agent_start`; later agent-loop calls are selected at `turn_start`, before Pi refreshes the physical request's thinking level. Steering inserted after that boundary is reselected before dispatch. Direct SDK calls and compaction summaries do not trigger this loop hook. Extension-authored custom runs keep their effort without selection. The physical model is never changed. Provider payloads are unchanged unless the optional Codex cache preservation below is enabled. Changing effort can affect prompt caching; cache savings are not guaranteed.
 
 Step selection shares **one 4-second deadline**, including first-time backend discovery, availability, authentication and selection. Failure goes directly to Pi's configured default effort, without an answering-model selection retry. Cancellation retains the current effort. Existing turn-mode deadlines and fallback remain unchanged.
 
 Manually changing effort pauses step selection for the current instance, including later user tasks. The footer shows `auto step paused`; `/auto on` or an explicit mode selection resumes it. For a fixed effort across restarts, use `/auto default off`. Pi versions below 0.99.0 are unsupported; step selection does not require Pi 1.5-specific APIs. Virtual answering models are not supported in step mode.
 
 **Privacy:** enabling step mode sends tool-result text and intermediate assistant progress to the saved selector provider without redaction, in addition to the existing task context. Standalone tool-call arguments and thinking blocks are excluded, but tool output can itself contain secrets or echo arguments. No extra model is called to summarize history. Execution input is not copied into diagnostics, but selector reasons or debug responses may repeat it; step decisions record `mode: "step"`. Use a trusted selector or keep step mode disabled for sensitive work.
+
+## Experimental Codex cache preservation
+
+Enable with **`/auto cache on`**, disable with `/auto cache off`. The `codexCache` flag is saved in `pi-auto.json` and defaults to **false**. It is independent of turn/step mode and automatic selection: when enabled, manual effort changes are also adapted, even with `/auto off`.
+
+- **Only supported:** `openai-codex/gpt-6.1-sol` using `openai-codex-responses` on the official HTTPS `chatgpt.com/backend-api` Codex endpoint. Other models, custom endpoints, API-key Responses requests, and virtual models are unchanged.
+- The first eligible request pins its request-level `reasoning.effort`. Later changes append `configuration_update` items, including directly after tool results. Earlier updates replay in their original positions so the old input prefix remains unchanged. This changes wire formatting, not the selected effort or physical model.
+- Session custom entries store effort levels, positions, and SHA-256 input/settings fingerprints, **not prompt text, tool results, credentials, or complete payloads**. Reload/resume/fork/tree navigation restore only the active branch. Identical retries do not duplicate entries; cancelled attempts may leave a checkpoint that is replayed consistently.
+- Successful compaction, model selection, changed earlier input/request settings, or a cache-toggle transition establishes a new baseline. Failed/cancelled compaction does not reset it. Summary/selector requests are excluded by their routing key. Existing native configuration updates are left alone; do not stack competing payload adapters.
+- This avoids effort-induced prefix changes; it does **not** guarantee cache hits, prevent expiry, or preserve a prefix that other extensions edit. A new baseline may cause a cold request. Unsupported/malformed payloads keep normal Pi behavior. If session metadata cannot be saved, Pi reports the extension error and retains the original request; the failed adaptation can miss cache.
+
+The full plugin path was live-tested on Pi 1.5.0 with the Codex login, a tool continuation, and a reopened session. Separate low/max controls provided behavioral evidence that updates affect reasoning; token counts are not a server-issued effective-effort receipt. No OpenAI API key or extra proxy is required for this tested path.
 
 The descriptions below refer to default **turn** behavior unless step mode is explicitly mentioned.
 
@@ -87,9 +99,11 @@ Restart Pi after changing proxy variables in its launch terminal.
 | `/auto on` | Enable automatic selection |
 | `/auto off` | Disable automatic selection and cancel a pending selection |
 | `/auto model` | Choose and save the selector backend in the bottom input area |
-| `/auto status` | Inspect the backend, effort, and latest selection |\n| `/auto mode turn` / `/auto mode step` | Save once-per-task or experimental per-model-call selection |
+| `/auto status` | Inspect the backend, effort, and latest selection |
+| `/auto mode turn` / `/auto mode step` | Save once-per-task or experimental per-model-call selection |
 | `/auto default on` | Enable automatic selection now and save on as the startup default |
 | `/auto default off` | Disable automatic selection now, cancel a pending selection, and save off as the startup default |
+| `/auto cache on` / `/auto cache off` | Save the opt-in Codex cache-preserving effort adapter |
 
 `/auto`, `/auto on`, and `/auto off` affect only the current extension instance. `/auto default on|off` saves a global startup default and immediately applies it to the current instance. `default off` also cancels a pending selection. Other running instances are unaffected; restarting or reloading uses the saved default.
 

@@ -47,6 +47,16 @@ describe("selector settings schema", () => {
 		writeFileSync(path, JSON.stringify({ mode }));
 		expect(() => writeSettings(path, { defaultEnabled: true })).toThrow("Invalid pi-auto settings");
 	});
+	it("persists the opt-in Codex cache flag without changing selection settings", () => {
+		writeSettings(path, { mode: "step", defaultEnabled: false, codexCache: true });
+		expect(readSettings(path)).toEqual({ mode: "step", defaultEnabled: false, codexCache: true });
+		writeSettings(path, { codexCache: false });
+		expect(readSettings(path)).toMatchObject({ mode: "step", defaultEnabled: false, codexCache: false });
+	});
+	it.each(["on", null, 1])("rejects invalid Codex cache flag %j", (codexCache) => {
+		writeFileSync(path, JSON.stringify({ codexCache }));
+		expect(() => writeSettings(path, { codexCache: true })).toThrow("Invalid pi-auto settings");
+	});
 	it("keeps an absent backend explicitly unselected", () => {
 		expect(readSettings(path)).toEqual({});
 		writeSettings(path, { defaultEnabled: false });
