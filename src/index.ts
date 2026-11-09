@@ -1,4 +1,5 @@
-import { clipboardImages } from "./clipboard-images.ts";
+import { clipboardImages, type ClipboardImageCache } from "./clipboard-images.ts";
+import { summarizeSelection } from "./statistics.ts";
 import { selectionImages } from "./selector-images.ts";
 import { join } from "node:path";
 import {
@@ -39,6 +40,7 @@ export default function piAuto(pi: ExtensionAPI): void {
 	let codexCacheEnabled = false;
 	let stepPaused = false;
 	let stepTask: SelectionTask | undefined;
+	let clipboardCache: ClipboardImageCache = new Map();
 	let skipFirstStep = false;
 	let virtualWarningShown = false;
 	const isStepMode = () => mode === "step" && supportsStepMode(VERSION);
@@ -257,6 +259,7 @@ export default function piAuto(pi: ExtensionAPI): void {
 						(isStepMode() ? ` · step${stepPaused ? " (paused by manual effort)" : ""}` : "") +
 						(codexCacheEnabled ? " · Codex cache preservation on" : ""),
 					availability,
+					statistics: summarizeSelection(ctx.sessionManager.getBranch()),
 					supportedEfforts: currentModel ? getSupportedThinkingLevels(currentModel) : [],
 					...(snapshot.last ? { last: snapshot.last } : {}),
 				});
@@ -267,6 +270,7 @@ export default function piAuto(pi: ExtensionAPI): void {
 	});
 
 	const restore = (ctx: ExtensionContext) => {
+		clipboardCache = new Map();
 		invalidateSelection();
 		stepTask = undefined;
 		skipFirstStep = false;
@@ -299,6 +303,7 @@ export default function piAuto(pi: ExtensionAPI): void {
 	});
 	pi.on("session_shutdown", (_event, ctx) => {
 		stopped = true;
+		clipboardCache.clear();
 		activeSelection?.abort("session_shutdown");
 		ctx.ui.setWidget(PROGRESS_KEY, undefined);
 		ctx.ui.setStatus(STATUS_KEY, undefined);
@@ -391,7 +396,7 @@ export default function piAuto(pi: ExtensionAPI): void {
 						routerProbabilities = { ...decision.probabilities };
 					}
 					return decision;
-				} : undefined, (value) => { if (acceptingDiagnostics) routing = structuredClone(value); }, selectorModel, execution);
+				} : undefined, (value) => { if (acceptingDiagnostics) routing = structuredClone(value); }, selectorModel, execution, clipboardCache);
 				trace.outcome = result.status;
 				if (result.status === "selected" && !routerModel) actualBackend = "default";
 				if (result.status === "skipped") trace.reason = result.reason;
@@ -519,6 +524,8 @@ export default function piAuto(pi: ExtensionAPI): void {
 			if (!activeSelection) { stepTask = undefined; skipFirstStep = false; }
 			return;
 		}
+		// 新任务不沿用上一轮剪贴板附件，避免长期保留像素数据。
+		clipboardCache = new Map();
 		stepTask = event;
 		skipFirstStep = true;
 		await selectForTask(event, ctx, isStepMode() ? buildStepExecution([]) : undefined);
@@ -538,6 +545,7 @@ export default function piAuto(pi: ExtensionAPI): void {
 		if (prompt === stepTask.prompt && images.length === previousImages.length &&
 			images.every((image, index) => image.data === previousImages[index]?.data && image.mimeType === previousImages[index]?.mimeType)) return;
 		// steering 在 turn_start 后才入列，因此在 prepareRequest 前补选新用户指令。
+		clipboardCache = new Map();
 		stepTask = { prompt, images };
 		await selectForTask(stepTask, ctx, buildStepExecution([]));
 	});
@@ -554,10 +562,11 @@ async function planForEvent(
 	onDiagnostics?: (value: RoutingDiagnostics) => void,
 	selectorModel?: Model<Api>,
 	execution?: StepExecutionState,
+	clipboardCache?: ClipboardImageCache,
 ) {
 	const contextEntries = ctx.sessionManager.buildContextEntries();
 	// TUI 粘贴截图只插入临时路径，分类器选档前补读；聊天选档及主模型输入保持不变。
-	const clipboard = selectClassifier ? await clipboardImages(event.prompt, signal) : { images: [], failed: false };
+	const clipboard = selectClassifier ? await clipboardImages(event.prompt, signal, clipboardCache) : { images: [], failed: false };
 	if (clipboard.failed) ctx.ui.notify("pi-auto: some clipboard screenshots could not be read; effort selection may have incomplete image context.", "warning");
 	return withAbort(planEffort(
 		{

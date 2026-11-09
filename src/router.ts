@@ -132,7 +132,7 @@ export async function planEffort(input: PlanEffortInput, complete: CompleteRoute
 		const responseText = await complete({
 			model: selectorModel, effort: routerEffort, purpose: "effort", signal: input.signal,
 			systemPrompt: `${getEffortInstructions(!!input.execution)}\nSupported effort criteria: ${JSON.stringify(getEffortCriteria(efforts))}\nReturn JSON only: {"effort":"<supported effort>","reason":"<brief English reason, max 160 characters>"}.`,
-			userPrompt: JSON.stringify(state),
+			userPrompt: JSON.stringify(selectionState(state)),
 		});
 		input.signal.throwIfAborted();
 		const selected = parseDecision(responseText, efforts);
@@ -141,6 +141,22 @@ export async function planEffort(input: PlanEffortInput, complete: CompleteRoute
 		diagnostics.selectionMs = elapsed(selectionStartedAt);
 		report();
 	}
+}
+
+/** 传输时引用已包含的失败结果，原文仍完整保留一次；不改变内部失败追踪。 */
+export function selectionState(state: EffortState) {
+	if (!state.execution) return state;
+	const { recentTools, unresolvedFailures, ...execution } = state.execution;
+	return {
+		...state,
+		execution: {
+			...execution, recentTools,
+			unresolvedFailures: unresolvedFailures.map((failure) => {
+				const index = recentTools.indexOf(failure);
+				return index < 0 ? failure : { recentToolIndex: index };
+			}),
+		},
+	};
 }
 
 function parseDecision(responseText: string, efforts: readonly ModelThinkingLevel[]): { effort: ModelThinkingLevel; reason: string } {

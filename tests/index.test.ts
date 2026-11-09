@@ -333,6 +333,20 @@ describe.skipIf(!supportsStepMode(VERSION))("step selection lifecycle", () => {
 			]);
 		} finally { await rm(file, { force: true }); }
 	});
+	it("reuses clipboard attachments across steps but not across user tasks", async () => {
+		const file = join(tmpdir(), "pi-clipboard-2622b15b-8def-4198-a9e5-79170485da01.png");
+		try {
+			await writeFile(file, "clipboard fixture");
+			const h = await stepHarness();
+			await h.start(file + " fix this");
+			const first = vi.mocked(selectWithClassifier).mock.lastCall?.[1].images?.[0];
+			await h.emit(turn(0));
+			await h.emit(turn(1));
+			expect(vi.mocked(selectWithClassifier).mock.lastCall?.[1].images?.[0]).toBe(first);
+			await h.start(file + " fix this");
+			expect(vi.mocked(selectWithClassifier).mock.lastCall?.[1].images?.[0]).not.toBe(first);
+		} finally { await rm(file, { force: true }); }
+	});
 	async function stepHarness() {
 		await writeFile(join(agentDirectory, "pi-auto.json"), JSON.stringify({
 			mode: "step", backend: { type: "classifier", provider: "typesafe", id: "jev-latest" },
@@ -387,7 +401,7 @@ describe.skipIf(!supportsStepMode(VERSION))("step selection lifecycle", () => {
 		expect(JSON.stringify(state)).not.toContain("private-tool-argument");
 		expect(JSON.stringify(decisions(h))).not.toContain("private-tool-output");
 		expect(JSON.stringify(decisions(h))).not.toContain("private-tool-argument");
-		expect(decisions(h).at(-1)?.routing?.policyVersion).toBe("2");
+		expect(decisions(h).at(-1)?.routing?.policyVersion).toBe("3");
 	});
 
 	it("does not pause on its own setter but pauses for manual effort until /auto on", async () => {

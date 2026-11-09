@@ -98,6 +98,19 @@ describe("native Classifier adapter", () => {
 		expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Authorization")).toBe("Bearer runtime-key");
 	});
 
+	it("sends overlapping step failures once without mutating the internal state", async () => {
+		const failure = { toolName: "bash", isError: true, text: "unique-failure-text" };
+		const state = { ...invocation.state, execution: {
+			phase: "next-model-call" as const, assistantProgress: "", recentTools: [failure], unresolvedFailures: [failure],
+			resolvedFailureCount: 0, omittedToolCount: 0,
+		} };
+		await selectWithClassifier(registry, { ...invocation, state });
+		const body = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string);
+		expect(body.state.execution.unresolvedFailures).toEqual([{ recentToolIndex: 0 }]);
+		expect(JSON.stringify(body).match(/unique-failure-text/g)).toHaveLength(1);
+		expect(state.execution.unresolvedFailures[0]).toBe(failure);
+	});
+
 	it("uses stored credentials through the native runtime rather than passing the environment key", async () => {
 		await credentials.modify("typesafe", async () => ({ type: "api_key", key: "stored-key" }));
 		await selectWithClassifier(registry, invocation);
@@ -108,7 +121,7 @@ describe("native Classifier adapter", () => {
 		vi.spyOn(registry, "getAvailableOfType").mockResolvedValue([]);
 		const onDiagnostics = vi.fn();
 		await expect(selectWithClassifier(registry, { ...invocation, onDiagnostics })).rejects.toThrow("unavailable in Pi");
-		expect(onDiagnostics.mock.lastCall?.[0]).toEqual({ stage: "request", errorCode: "model_unavailable" });
+		expect(onDiagnostics.mock.lastCall?.[0]).toEqual({ stage: "request", failureStage: "availability", errorCode: "model_unavailable" });
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
@@ -123,7 +136,53 @@ describe("native Classifier adapter", () => {
 		const onDiagnostics = vi.fn();
 		await expect(selectWithClassifier(registry, { ...invocation, onDiagnostics, debugResponses: true })).rejects.toThrow(/^Classifier request failed$/);
 		expect(fetchMock).toHaveBeenCalledTimes(1);
-		expect(onDiagnostics.mock.lastCall?.[0]).toEqual({ stage: "request", stopReason: "error", errorCode: "request_failed" });
+		// 当前真实 Pi 运行时丢弃 HTTP 元数据；不能从 errorMessage 恢复它。
+		expect(onDiagnostics.mock.lastCall?.[0]).toEqual({ stage: "request", failureStage: "provider", stopReason: "error", errorCode: "request_failed" });
+	});
+
+	it("distinguishes availability and image preparation failures before provider dispatch", async () => {
+		const onDiagnostics = vi.fn();
+		const available = vi.spyOn(registry, "getAvailableOfType");
+		available.mockRejectedValueOnce(new Error("private availability credentials"));
+		await expect(selectWithClassifier(registry, { ...invocation, onDiagnostics })).rejects.toThrow(/^Classifier request failed$/);
+		expect(onDiagnostics.mock.lastCall?.[0]).toEqual({ stage: "request", failureStage: "availability", errorCode: "availability_failed" });
+		const image = { type: "image" as const, mimeType: "image/png", get data(): string { throw new Error("private image"); } };
+		await expect(selectWithClassifier(registry, { ...invocation, images: [image], onDiagnostics })).rejects.toThrow(/^Classifier request failed$/);
+		expect(onDiagnostics.mock.lastCall?.[0]).toEqual({ stage: "request", failureStage: "image_preparation", errorCode: "image_preparation_failed" });
+		expect(fetchMock).not.toHaveBeenCalled();
+		expect(JSON.stringify(onDiagnostics.mock.calls)).not.toContain("private");
+	});
+
+	it.each(["status", "statusCode"])("retains only directly exposed structured provider %s and allowlisted code", async (statusField) => {
+		const error = Object.assign(new Error("private test-key"), {
+			[statusField]: 429, code: "rate_limit_exceeded", body: "private", headers: { Authorization: "test-key" },
+		});
+		vi.spyOn(registry, "classify").mockRejectedValueOnce(error);
+		const onDiagnostics = vi.fn();
+		await expect(selectWithClassifier(registry, { ...invocation, onDiagnostics, debugResponses: true })).rejects.toThrow(/^Classifier request failed$/);
+		expect(onDiagnostics.mock.lastCall?.[0]).toEqual({ stage: "request", failureStage: "provider",
+			errorCode: "request_failed", httpStatus: 429, providerCode: "rate_limit_exceeded" });
+		expect(JSON.stringify(onDiagnostics.mock.calls)).not.toMatch(/private|test-key|Authorization|body|headers/);
+	});
+
+	it.each([
+		{ status: "429", code: "test-key" }, { status: 399, code: "PRIVATE_TOKEN" }, { status: 600 }, { status: 429.5 },
+		{ cause: { status: 401, code: "invalid_api_key" }, response: { status: 401 }, errorMessage: "HTTP 401 invalid_api_key" },
+	])("does not infer structured failure metadata from unsafe values %#", async (fields) => {
+		vi.spyOn(registry, "classify").mockRejectedValueOnce(Object.assign(new Error("HTTP 429 rate_limit_exceeded test-key"), fields));
+		const onDiagnostics = vi.fn();
+		await expect(selectWithClassifier(registry, { ...invocation, onDiagnostics })).rejects.toThrow(/^Classifier request failed$/);
+		expect(onDiagnostics.mock.lastCall?.[0]).toEqual({ stage: "request", failureStage: "provider", errorCode: "request_failed" });
+	});
+
+	it("does not invoke structured-error getters", async () => {
+		const getter = vi.fn(() => { throw new Error("private getter"); });
+		const error = Object.defineProperties(new Error("private"), { status: { get: getter }, code: { get: getter } });
+		vi.spyOn(registry, "classify").mockRejectedValueOnce(error);
+		const onDiagnostics = vi.fn();
+		await expect(selectWithClassifier(registry, { ...invocation, onDiagnostics })).rejects.toThrow(/^Classifier request failed$/);
+		expect(getter).not.toHaveBeenCalled();
+		expect(onDiagnostics.mock.lastCall?.[0]).toEqual({ stage: "request", failureStage: "provider", errorCode: "request_failed" });
 	});
 
 	it("does not retry transport failures or expose exceptions", async () => {
@@ -138,7 +197,7 @@ describe("native Classifier adapter", () => {
 		fetchMock.mockResolvedValueOnce(Response.json(body));
 		const onDiagnostics = vi.fn();
 		await expect(selectWithClassifier(registry, { ...invocation, onDiagnostics, debugResponses: true })).rejects.toThrow(/^Classifier request failed$/);
-		expect(onDiagnostics.mock.lastCall?.[0]).toEqual({ stage: "request", stopReason: "error", errorCode: "request_failed" });
+		expect(onDiagnostics.mock.lastCall?.[0]).toEqual({ stage: "request", failureStage: "provider", stopReason: "error", errorCode: "request_failed" });
 	});
 
 	it("does not capture malformed JSON or a failed response stream", async () => {
@@ -168,7 +227,7 @@ describe("native Classifier adapter", () => {
 		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
 		controller.abort();
 		await rejected;
-		expect(onDiagnostics.mock.lastCall?.[0]).toEqual({ stage: "request", errorCode: "request_cancelled" });
+		expect(onDiagnostics.mock.lastCall?.[0]).toEqual({ stage: "request", failureStage: "provider", errorCode: "request_cancelled" });
 		expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
@@ -180,7 +239,7 @@ describe("native Classifier adapter", () => {
 		});
 		const onDiagnostics = vi.fn();
 		await expect(selectWithClassifier(registry, { ...invocation, onDiagnostics, debugResponses: true })).rejects.toThrow("Classifier provider aborted the request");
-		expect(onDiagnostics.mock.lastCall?.[0]).toEqual({ stage: "request", stopReason: "aborted", errorCode: "provider_aborted" });
+		expect(onDiagnostics.mock.lastCall?.[0]).toEqual({ stage: "request", failureStage: "provider", stopReason: "aborted", errorCode: "provider_aborted" });
 		expect(invocation.signal.aborted).toBe(false);
 	});
 });
@@ -202,7 +261,7 @@ describe("native result validation and diagnostics", () => {
 		const onDiagnostics = vi.fn();
 		const onTiming = vi.fn();
 		await expect(selectWithClassifier(registry, { ...invocation, onDiagnostics, onTiming })).rejects.toThrow(`(${errorCode})`);
-		expect(onDiagnostics.mock.lastCall?.[0]).toMatchObject({ stage: "validation", stopReason: "stop", errorCode });
+		expect(onDiagnostics.mock.lastCall?.[0]).toMatchObject({ stage: "validation", failureStage: "validation", stopReason: "stop", errorCode });
 		expect(onDiagnostics.mock.lastCall?.[0]).not.toHaveProperty("rawText");
 		expect(onTiming.mock.lastCall?.[0]).toMatchObject({ validateMs: expect.any(Number), inputTokens: 250, outputTokens: 0 });
 	});

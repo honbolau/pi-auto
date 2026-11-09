@@ -96,7 +96,29 @@ describe("selection UI", () => {
 		expect(render(true, restored).lines.join("\n")).not.toContain("private");
 	});
 
+	it.each(["availability", "image_preparation", "provider", "validation"] as const)("round trips optional failure stage %s", (failureStage) => {
+		const classifierDiagnostics = { stage: "request" as const, failureStage, errorCode: "request_failed" as const };
+		expect(readDecision(entry({ classifierDiagnostics }))?.classifierDiagnostics).toEqual(classifierDiagnostics);
+	});
+
+	it("round trips safe structured metadata and still accepts older diagnostics", () => {
+		const classifierDiagnostics = { stage: "request" as const, failureStage: "provider" as const,
+			errorCode: "request_failed" as const, httpStatus: 429, providerCode: "rate_limit_exceeded" as const };
+		expect(readDecision(entry({ classifierDiagnostics }))?.classifierDiagnostics).toEqual(classifierDiagnostics);
+		expect(readDecision(entry({ classifierDiagnostics: { stage: "request", errorCode: "request_failed" } }))?.classifierDiagnostics)
+			.toEqual({ stage: "request", errorCode: "request_failed" });
+	});
+
 	it.each([
+		{ stage: "request", failureStage: "private" },
+		{ stage: "request", httpStatus: "429" },
+		{ stage: "request", httpStatus: 399 },
+		{ stage: "request", httpStatus: 600 },
+		{ stage: "request", httpStatus: 429.5 },
+		{ stage: "request", httpStatus: NaN },
+		{ stage: "request", providerCode: "PRIVATE_TOKEN" },
+		{ stage: "request", errorMessage: "private" },
+		{ stage: "request", body: "private" },
 		null, {}, { stage: "unknown" }, { stage: "request", stopReason: "unknown" }, { stage: "validation", errorCode: "private-error" },
 		{ stage: "request", headers: { Authorization: "private" } },
 		{ stage: "validation", responseType: "object" },

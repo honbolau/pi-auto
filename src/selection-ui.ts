@@ -1,5 +1,5 @@
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
-import { CLASSIFIER_ERROR_CODES, CLASSIFIER_RESPONSE_TEXT_LIMIT, type ClassifierDiagnostics, type ClassifierTiming } from "./classifier.ts";
+import { CLASSIFIER_ERROR_CODES, CLASSIFIER_FAILURE_STAGES, CLASSIFIER_PROVIDER_ERROR_CODES, CLASSIFIER_RESPONSE_TEXT_LIMIT, type ClassifierDiagnostics, type ClassifierTiming } from "./classifier.ts";
 import { ROUTER_RESPONSE_TEXT_LIMIT, type RouterResponseDiagnostics, type RoutingDiagnostics } from "./router.ts";
 import { keyHint, type EntryRenderer, type SessionEntry, type Theme } from "@earendil-works/pi-coding-agent";
 import { Text, type Component, type TUI } from "@earendil-works/pi-tui";
@@ -149,7 +149,10 @@ export function readDecision(entry: SessionEntry): EffortDecision | undefined {
 function isClassifierDiagnostics(value: unknown): value is ClassifierDiagnostics {
 	if (!isRecord(value) || !["request", "validation", "complete"].includes(String(value.stage)) ||
 		(value.errorCode !== undefined && !CLASSIFIER_ERROR_CODES.some((code) => code === value.errorCode)) ||
-		!Object.keys(value).every((key) => ["stage", "errorCode", "stopReason", "responseType", "responseCharacters", "rawText", "rawTextTruncated", "imageWarning", "imagesSent"].includes(key))) return false;
+		!Object.keys(value).every((key) => ["stage", "errorCode", "failureStage", "httpStatus", "providerCode", "stopReason", "responseType", "responseCharacters", "rawText", "rawTextTruncated", "imageWarning", "imagesSent"].includes(key))) return false;
+	if (value.failureStage !== undefined && !CLASSIFIER_FAILURE_STAGES.some((stage) => stage === value.failureStage)) return false;
+	if (value.httpStatus !== undefined && (typeof value.httpStatus !== "number" || !Number.isInteger(value.httpStatus) || value.httpStatus < 400 || value.httpStatus > 599)) return false;
+	if (value.providerCode !== undefined && !CLASSIFIER_PROVIDER_ERROR_CODES.some((code) => code === value.providerCode)) return false;
 	if (value.imageWarning !== undefined && !["unsupported", "invalid_image", "image_limits", "request_limits"].includes(String(value.imageWarning))) return false;
 	if (value.imagesSent !== undefined && (!Number.isSafeInteger(value.imagesSent) || Number(value.imagesSent) < 0)) return false;
 	if (value.stopReason !== undefined && !["stop", "error", "aborted"].includes(String(value.stopReason))) return false;

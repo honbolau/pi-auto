@@ -1,5 +1,14 @@
 # pi-auto
 
+### Selection diagnostics and reuse
+
+`/auto status` summarizes up to 100 valid decisions on the current branch: selector/default/no-call outcomes, P50/P95 latency, effort transitions and reported catalog costs with coverage. Missing estimates are not treated as free usage; these are not invoice totals.
+
+Classifier failures record the failing stage. Numeric HTTP status and allowlisted provider codes are saved only when exposed as structured error properties; Pi may normalize failures to a generic result, so those fields can remain unknown. Error messages, bodies, headers and credentials are never parsed or saved.
+
+Step mode reuses unchanged clipboard attachments only within the current task, revalidating file identity before reuse. Overlapping unresolved failures reference their zero-based `recentToolIndex`; full tool text is transmitted once, not truncated. Steering still reselects before request reasoning is captured: skipping based on pending-message flags is unsafe because they include follow-ups.
+
+
 English | [简体中文](./README.zh-CN.md)
 
 A Pi extension that automatically selects the current model's thinking effort before each task. **It adjusts effort only—never switches your model.**

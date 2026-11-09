@@ -4,6 +4,8 @@ import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type Keybinding, type KeybindingsManager, type TUI } from "@earendil-works/pi-tui";
 import { formatContextSummary, formatClassifierTiming, type EffortDecision } from "./selection-ui.ts";
 
+import type { SelectionStatistics } from "./statistics.ts";
+
 const OVERLAY_WIDTH = 96;
 const OVERLAY_MARGIN = 1;
 
@@ -15,6 +17,7 @@ export interface AutoStatus {
 	availability?: string;
 	supportedEfforts: readonly ModelThinkingLevel[];
 	last?: EffortDecision;
+	statistics?: SelectionStatistics;
 }
 
 type StatusLine = { text: string; tone?: "accent" | "warning" | "dim" };
@@ -44,6 +47,21 @@ export function buildStatusPages(state: AutoStatus): StatusPage[] {
 		if (context) overview.push(row(`Context: ${formatContextSummary(context)}`));
 		if (last.status === "selected") overview.push(row(`Reason: ${last.reason}`));
 		if (last.routing?.taskTruncated) overview.push(row("Current task was truncated for selection.", "warning"));
+	}
+
+	// 仅统计当前分支的最近记录，未知费用不按免费处理。
+	const stats = state.statistics;
+	if (stats) {
+		const { outcomes, elapsedMs, cost } = stats;
+		overview.push(...section("Recent branch selections"),
+			row(`Samples: ${stats.sampleCount} (up to 100)`),
+			row(`Selector selected: ${outcomes.selectorSelected} | Default fallback: ${outcomes.defaultFallback} | No call: ${outcomes.noCall}`),
+			row(`Skipped: ${outcomes.skipped} | Cancelled: ${outcomes.cancelled} | Unknown: ${outcomes.unknown}`),
+			row(`Latency P50: ${elapsedMs.p50 ?? "unknown"}ms | P95: ${elapsedMs.p95 ?? "unknown"}ms`),
+			row(`Reported catalog cost: $${cost.total.toFixed(6)} | Coverage: ${cost.reportedRequests}/${cost.attemptedRequests} potential requests`),
+			row(cost.complete ? "Catalog estimates only, not billed totals." : `Cost incomplete: ${cost.missingCostRequests} missing estimates, ${cost.unknownDecisions} decisions without attempt traces.`, "dim"));
+		for (const [transition, count] of Object.entries(stats.effortTransitions)) overview.push(row(`Effort ${transition}: ${count}`));
+		for (const [code, count] of Object.entries(stats.failureCodes)) overview.push(row(`Failure ${code}: ${count}`, "warning"));
 	}
 
 	const contextLines: StatusLine[] = [];
@@ -80,6 +98,12 @@ export function buildStatusPages(state: AutoStatus): StatusPage[] {
 				diagnostics.push(row(`Stage: ${classifier.stage}`));
 				if (classifier.stopReason) diagnostics.push(row(`Stop reason: ${classifier.stopReason}`));
 				if (classifier.errorCode) diagnostics.push(row(`Error code: ${classifier.errorCode}`, "warning"));
+				if (classifier.failureStage) diagnostics.push(row(`Failure stage: ${classifier.failureStage}`, "warning"));
+				if (classifier.httpStatus !== undefined) diagnostics.push(row(`HTTP status: ${classifier.httpStatus}`, "warning"));
+				if (classifier.providerCode) diagnostics.push(row(`Provider code: ${classifier.providerCode}`, "warning"));
+				if (classifier.stopReason === "error" && classifier.httpStatus === undefined && classifier.providerCode === undefined) {
+					diagnostics.push(row("No structured status/code exposed by Pi. Error text is not inspected or saved.", "dim"));
+				}
 				if (classifier.responseType !== undefined) {
 					diagnostics.push(row(`Normalized type: ${classifier.responseType}`), row(`Response text: ${classifier.responseCharacters} UTF-16 units`));
 					if (classifier.rawText !== undefined) diagnostics.push(row(`Response capture saved: ${classifier.rawText.length} UTF-16 units | truncated: ${classifier.rawTextTruncated ? "yes" : "no"}`),

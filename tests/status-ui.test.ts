@@ -3,6 +3,7 @@ import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { KeybindingsManager, TUI_KEYBINDINGS, visibleWidth, type TUI } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 import { DECISION_ENTRY_TYPE, readDecision, type EffortDecision } from "../src/selection-ui.ts";
+import { summarizeSelection } from "../src/statistics.ts";
 import { AutoStatusPanel, buildStatusPages, showAutoStatus, type AutoStatus } from "../src/status-ui.ts";
 
 function decision(): EffortDecision {
@@ -41,6 +42,19 @@ function panel(state = status(), rows = 24, keybindings = new KeybindingsManager
 }
 
 describe("status information hierarchy", () => {
+	it("shows branch aggregate latency and explicitly incomplete cost coverage", () => {
+		const state = { ...status(), statistics: summarizeSelection([]) };
+		state.statistics.sampleCount = 2;
+		state.statistics.elapsedMs = { p50: 500, p95: 1000 };
+		state.statistics.outcomes.defaultFallback = 1;
+		state.statistics.cost.complete = false;
+		state.statistics.cost.missingCostRequests = 1;
+		const overview = text(state, 0);
+		expect(overview).toContain("Samples: 2");
+		expect(overview).toContain("Default fallback: 1");
+		expect(overview).toContain("P50: 500ms | P95: 1000ms");
+		expect(overview).toContain("Cost incomplete: 1 missing estimates");
+	});
 	it("separates current settings from the previous selection and hides technical detail on overview", () => {
 		const overview = text(status(), 0);
 		expect(overview).toContain("Current (at open)\nAuto: enabled");
@@ -128,6 +142,25 @@ describe("status information hierarchy", () => {
 		for (const value of ["Stop reason: stop", "classify 31.0ms", "validate 0.2ms", "total 32.0ms", "250 input / 0 output",
 			"Classifier catalog cost: $0", "zero does not imply free usage", "classifierDiagnostics.rawText"]) expect(page).toContain(value);
 		expect(page).not.toMatch(/private|HTTP status:|Request bytes:|socket #|connection new|headers [0-9]/);
+	});
+
+	it("renders only available structured classifier failure metadata", () => {
+		const last = decision();
+		last.classifierDiagnostics = { stage: "request", failureStage: "provider", errorCode: "request_failed",
+			stopReason: "error", httpStatus: 429, providerCode: "rate_limit_exceeded" };
+		const page = text(status(last), 2);
+		for (const value of ["Failure stage: provider", "Error code: request_failed", "HTTP status: 429", "Provider code: rate_limit_exceeded"]) expect(page).toContain(value);
+		expect(page).not.toContain("No structured status/code exposed");
+	});
+
+	it("explains the real runtime limitation without inventing transport fields", () => {
+		const last = decision();
+		last.classifierDiagnostics = { stage: "request", failureStage: "provider", stopReason: "error", errorCode: "request_failed" };
+		const page = text(status(last), 2);
+		expect(page).toContain("Failure stage: provider");
+		expect(page).toContain("No structured status/code exposed by Pi");
+		expect(page).toContain("Error text is not inspected or saved");
+		expect(page).not.toMatch(/HTTP status:|Provider code:/);
 	});
 
 	it("shows current-model response metadata and explains missing raw logs", () => {

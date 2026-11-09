@@ -34,6 +34,25 @@ function input(currentModel: Model<Api> | undefined = createModel()) {
 }
 
 describe("planEffort", () => {
+	it("sends overlapping failed tool text once and preserves older unresolved failures in full", async () => {
+		const failure = { toolName: "bash", isError: true, text: "retained failure " + "x".repeat(8000) };
+		const older = { toolName: "bash", isError: true, text: "older unresolved failure" };
+		const execution = {
+			phase: "next-model-call" as const, assistantProgress: "Check the fix",
+			recentTools: [failure], unresolvedFailures: [older, failure],
+			resolvedFailureCount: 0, omittedToolCount: 1,
+		};
+		const complete = vi.fn(async (_invocation: RouterInvocation) => '{"effort":"low"}');
+		await planEffort({ ...input(), execution }, complete);
+		const prompt = complete.mock.calls[0]?.[0].userPrompt ?? "";
+		const sent = JSON.parse(prompt);
+		expect(sent.execution.recentTools[0]).toEqual(failure);
+		expect(sent.execution.unresolvedFailures).toEqual([older, { recentToolIndex: 0 }]);
+		expect(prompt.split(failure.text)).toHaveLength(2);
+		// 只改变传输结构，内部失败对象与完整文本不被修改。
+		expect(execution.unresolvedFailures[1]).toBe(failure);
+		expect(execution.unresolvedFailures[1]?.text).toBe(failure.text);
+	});
 	it("passes current images separately without serializing them into state", async () => {
 		const images = [{ type: "image" as const, data: "private-image", mimeType: "image/png" }];
 		const select = vi.fn<SelectClassifier>(async () => ({ effort: "low", model: "jev", confidence: 1, probabilities: { low: 1 } }));
